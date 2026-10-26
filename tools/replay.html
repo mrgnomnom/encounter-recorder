@@ -1,0 +1,845 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Encounter Replay</title>
+<!--
+  Replays an Encounter Recorder session tick by tick. Open this file in a browser and drop a .jsonl
+  session onto it. Everything runs locally: the file is read in the page and never uploaded.
+-->
+<style>
+:root {
+  --bg: #f4f2ee; --panel: #ffffff; --ink: #1d1c1a; --muted: #6b675f; --line: #dcd7cd;
+  --floor: #ebe7df; --wall: #4a463f; --block: #b9b2a5; --grid: #e0dbd1;
+  --me: #1f8a4c; --npc: #c27c0e; --player: #3b6fb6; --proj: #b0306a; --gfx: #7a4cc2;
+  --hit: #c0392b; --block-hit: #2d6cdf; --heal: #1f8a4c; --accent: #c0392b; --lit: #f1c40f;
+  --slot: #f0ece4; --slot-line: #d6cfc2;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #171614; --panel: #22201d; --ink: #ece8e1; --muted: #9a958b; --line: #3a3732;
+    --floor: #1d1b19; --wall: #d8d2c6; --block: #4a463f; --grid: #2a2825;
+    --me: #3ccf7a; --npc: #f0a531; --player: #6fa0ea; --proj: #f05fa0; --gfx: #b08cf0;
+    --hit: #f0604f; --block-hit: #6fa0ea; --heal: #3ccf7a; --accent: #f0604f; --lit: #f1c40f;
+    --slot: #2b2925; --slot-line: #3d3a34;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #171614; --panel: #22201d; --ink: #ece8e1; --muted: #9a958b; --line: #3a3732;
+  --floor: #1d1b19; --wall: #d8d2c6; --block: #4a463f; --grid: #2a2825;
+  --me: #3ccf7a; --npc: #f0a531; --player: #6fa0ea; --proj: #f05fa0; --gfx: #b08cf0;
+  --hit: #f0604f; --block-hit: #6fa0ea; --heal: #3ccf7a; --accent: #f0604f; --lit: #f1c40f;
+  --slot: #2b2925; --slot-line: #3d3a34;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg); color: var(--ink);
+  font: 13px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  display: flex; flex-direction: column;
+}
+header {
+  display: flex; align-items: center; gap: 12px; padding: 8px 16px;
+  border-bottom: 1px solid var(--line); flex-wrap: wrap;
+}
+header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+header .meta { color: var(--muted); font-size: 12px; }
+header label.file {
+  margin-left: auto; border: 1px solid var(--line); background: var(--panel);
+  padding: 4px 10px; border-radius: 6px; cursor: pointer;
+}
+header input[type=file] { display: none; }
+main { flex: 1; display: grid; grid-template-columns: 1fr 260px; min-height: 0; }
+#mapWrap { position: relative; min-height: 0; overflow: hidden; }
+#map { width: 100%; height: 100%; display: block; cursor: grab; }
+#map.dragging { cursor: grabbing; }
+#drop {
+  position: absolute; inset: 16px; border: 2px dashed var(--line); border-radius: 12px;
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  color: var(--muted); font-size: 14px; padding: 16px;
+}
+#drop.hidden { display: none; }
+#tip {
+  position: absolute; pointer-events: none; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 6px; padding: 4px 8px; font-size: 12px; display: none; white-space: pre;
+}
+#mapControls {
+  position: absolute; left: 12px; top: 12px; display: flex; gap: 8px; align-items: center;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px;
+}
+aside {
+  border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto;
+  display: flex; flex-direction: column; gap: 10px; padding: 10px;
+}
+.orbs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.orb { border: 1px solid var(--line); border-radius: 6px; padding: 4px; text-align: center; }
+.orb b { display: block; font-size: 15px; font-variant-numeric: tabular-nums; }
+.orb span { color: var(--muted); font-size: 11px; }
+.orb.on { border-color: var(--lit); }
+.tabs { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+.tabs button {
+  border: 1px solid var(--slot-line); background: var(--slot); color: var(--ink);
+  border-radius: 4px; padding: 3px 0; font-size: 10px; cursor: pointer;
+}
+.tabs button.game { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.tabs button.view { background: var(--line); }
+.panelTitle { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; }
+.grid { display: grid; gap: 3px; }
+.inv { grid-template-columns: repeat(4, 1fr); }
+.pray { grid-template-columns: repeat(5, 1fr); }
+.slot {
+  border: 1px solid var(--slot-line); background: var(--slot); border-radius: 4px;
+  min-height: 38px; padding: 2px; font-size: 9.5px; line-height: 1.15; overflow: hidden;
+  position: relative; word-break: break-word;
+}
+.slot .q { position: absolute; left: 2px; top: 1px; color: var(--lit); font-weight: 600; }
+.slot .n { display: block; margin-top: 10px; }
+.slot.clicked { outline: 2px solid var(--accent); outline-offset: -1px; }
+.slot.changed { box-shadow: inset 0 0 0 2px var(--lit); }
+.pray .slot { min-height: 30px; text-align: center; }
+.pray .slot .n { margin-top: 2px; }
+.pray .slot.on { background: color-mix(in srgb, var(--lit) 35%, var(--slot)); border-color: var(--lit); }
+.equip { grid-template-columns: 70px 1fr; }
+.equip div { padding: 2px 4px; border-bottom: 1px solid var(--slot-line); font-size: 11px; }
+.equip .k { color: var(--muted); }
+#screen { width: 100%; border: 1px solid var(--line); border-radius: 4px; display: block; }
+.clicks { font-size: 11.5px; }
+.clicks div { padding: 1px 0; }
+.clicks .w { color: var(--muted); }
+footer { border-top: 1px solid var(--line); padding: 8px 16px; display: flex; flex-direction: column; gap: 6px; }
+.transport { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.transport button, .transport select {
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+  border-radius: 6px; padding: 3px 10px; font-size: 13px; cursor: pointer;
+}
+.transport .tick { font-variant-numeric: tabular-nums; min-width: 170px; }
+#timelineWrap { position: relative; }
+#timeline { width: 100%; height: 34px; display: block; cursor: pointer; }
+#log {
+  height: 120px; overflow-y: auto; font: 11.5px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px;
+}
+#log .c { color: var(--muted); }
+#log .mark { color: var(--accent); font-weight: 600; }
+.muted { color: var(--muted); }
+@media (max-width: 760px) {
+  main { grid-template-columns: 1fr; grid-template-rows: 55vh auto; }
+  aside { border-left: 0; border-top: 1px solid var(--line); }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>Encounter Replay</h1>
+  <span class="meta" id="meta">No session loaded</span>
+  <label class="file">Open session…<input type="file" id="file" accept=".jsonl,.json,.txt"></label>
+</header>
+<main>
+  <div id="mapWrap">
+    <canvas id="map"></canvas>
+    <div id="mapControls">
+      <label><input type="checkbox" id="follow" checked> Follow me</label>
+      <label><input type="checkbox" id="smooth" checked> Smooth</label>
+      <span class="muted">Scroll to zoom · dashed = server tile</span>
+    </div>
+    <div id="drop">Drop an Encounter Recorder .jsonl session here<br>or use “Open session…”</div>
+    <div id="tip"></div>
+  </div>
+  <aside>
+    <div class="orbs">
+      <div class="orb" id="orbHp"><b>–</b><span>HP</span></div>
+      <div class="orb" id="orbPray"><b>–</b><span>Prayer</span></div>
+      <div class="orb" id="orbRun"><b>–</b><span>Run</span></div>
+      <div class="orb" id="orbSpec"><b>–</b><span>Spec</span></div>
+    </div>
+    <div class="tabs" id="tabs"></div>
+    <div class="panelTitle"><span id="panelName">Inventory</span><label><input type="checkbox" id="followTab" checked> follow game tab</label></div>
+    <div id="panel"></div>
+    <div class="panelTitle"><span>Clicks this tick</span><span id="clickCount"></span></div>
+    <canvas id="screen" width="240" height="140"></canvas>
+    <div class="clicks" id="clicks"></div>
+  </aside>
+</main>
+<footer>
+  <div class="transport">
+    <button id="prev" title="Previous tick (←)">◀</button>
+    <button id="play" title="Play / pause (space)">▶ Play</button>
+    <button id="next" title="Next tick (→)">▶</button>
+    <select id="speed">
+      <option value="0.25">0.25×</option><option value="0.5">0.5×</option>
+      <option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option>
+    </select>
+    <span class="tick" id="tickLabel">tick – / –</span>
+    <label><input type="checkbox" id="showVars"> varbits in log</label>
+    <span class="muted">Timeline: red = hits on you, purple = markers, orange = NPC animations</span>
+  </div>
+  <div id="timelineWrap"><canvas id="timeline"></canvas></div>
+  <div id="log"></div>
+</footer>
+<script>
+"use strict";
+
+const TAB_NAMES = ["Combat", "Skills", "Quests", "Inventory", "Equipment", "Prayer", "Magic",
+  "Tab 7", "Tab 8", "Tab 9", "Logout", "Settings", "Emotes", "Music"];
+const TAB_SHORT = ["Cmb", "Skl", "Qst", "Inv", "Eqp", "Pray", "Mag", "7", "8", "9", "Out", "Set", "Emo", "Mus"];
+// Prayer book order. Deadeye and Mystic Vigour replace Eagle Eye and Mystic Might in the same slot
+const PRAYERS = [
+  ["THICK_SKIN", "Thick Skin"], ["BURST_OF_STRENGTH", "Burst of Str"], ["CLARITY_OF_THOUGHT", "Clarity"],
+  ["SHARP_EYE", "Sharp Eye"], ["MYSTIC_WILL", "Mystic Will"], ["ROCK_SKIN", "Rock Skin"],
+  ["SUPERHUMAN_STRENGTH", "Superhuman"], ["IMPROVED_REFLEXES", "Imp. Reflex"], ["RAPID_RESTORE", "Rapid Rest."],
+  ["RAPID_HEAL", "Rapid Heal"], ["PROTECT_ITEM", "Prot. Item"], ["HAWK_EYE", "Hawk Eye"],
+  ["MYSTIC_LORE", "Mystic Lore"], ["STEEL_SKIN", "Steel Skin"], ["ULTIMATE_STRENGTH", "Ult. Str"],
+  ["INCREDIBLE_REFLEXES", "Inc. Reflex"], ["PROTECT_FROM_MAGIC", "Prot. Mage"], ["PROTECT_FROM_MISSILES", "Prot. Range"],
+  ["PROTECT_FROM_MELEE", "Prot. Melee"], ["EAGLE_EYE|DEADEYE", "Eagle/Dead"], ["MYSTIC_MIGHT|MYSTIC_VIGOUR", "Might/Vigour"],
+  ["RETRIBUTION", "Retribution"], ["REDEMPTION", "Redemption"], ["SMITE", "Smite"], ["PRESERVE", "Preserve"],
+  ["CHIVALRY", "Chivalry"], ["PIETY", "Piety"], ["RIGOUR", "Rigour"], ["AUGURY", "Augury"],
+];
+const WORN_SLOTS = [[0, "Head"], [1, "Cape"], [2, "Neck"], [3, "Weapon"], [4, "Body"], [5, "Shield"],
+  [7, "Legs"], [9, "Hands"], [10, "Feet"], [12, "Ring"], [13, "Ammo"]];
+const SPELLBOOKS = ["Standard", "Ancient", "Lunar", "Arceuus"];
+const INVENTORY_INTERFACE = 149;
+// Collision flags, as in RuneLite's CollisionDataFlag
+const BLOCK_FULL = 0x100 | 0x40000 | 0x200000;
+const WALL_N = 0x2, WALL_E = 0x8, WALL_S = 0x20, WALL_W = 0x80;
+
+const S = {
+  lines: [], ticks: [], byTick: [], header: null,
+  names: { npc: new Map(), item: new Map(), size: new Map() },
+  scenes: [], items: { inv: [], worn: [] }, tabs: [], looks: [],
+  t: 0, frac: 0, playing: false, speed: 1, lastFrame: 0,
+  zoom: 18, panX: 0, panY: 0, viewTab: 3,
+};
+
+const $ = id => document.getElementById(id);
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+// ---------- loading ----------
+
+function load(text, fileName) {
+  const lines = [];
+  let bad = 0;
+  for (const raw of text.split("\n")) {
+    const s = raw.trim();
+    if (!s) continue;
+    try { lines.push(JSON.parse(s)); } catch { bad++; }
+  }
+  Object.assign(S, {
+    lines, ticks: [], byTick: [], header: null, scenes: [], tabs: [], looks: [],
+    items: { inv: [], worn: [] }, names: { npc: new Map(), item: new Map(), size: new Map() },
+  });
+  let maxT = 0;
+  for (const l of lines) maxT = Math.max(maxT, l.t || 0);
+  for (let i = 0; i <= maxT; i++) S.byTick.push([]);
+  for (const l of lines) {
+    S.byTick[l.t || 0].push(l);
+    switch (l.e) {
+      case "header": S.header = l; break;
+      case "tick": S.ticks[l.t] = l; break;
+      case "npcdef": S.names.npc.set(l.def.id, l.def.name); S.names.size.set(l.def.id, l.def.size || 1);
+        if (l.def.baseId != null) { S.names.npc.set(l.def.baseId, l.def.name); S.names.size.set(l.def.baseId, l.def.size || 1); }
+        break;
+      case "itemdef": S.names.item.set(l.id, l.name); break;
+      // Format 1 had no item definitions: clicks still name the item they were on
+      case "click": if (l.item > 0 && l.target && !S.names.item.has(l.item)) S.names.item.set(l.item, l.target); break;
+      case "scene": S.scenes.push(l); break;
+      case "items": S.items[l.which]?.push(l); break;
+      case "ui_tab": S.tabs.push(l); break;
+      case "look": S.looks.push(l); break;
+    }
+  }
+  const h = S.header || {};
+  $("meta").textContent = `${fileName} · ${h.label ?? "?"} · revision ${h.revision ?? "?"} · world ${h.world ?? "?"} · ` +
+    `${maxT + 1} ticks (${((maxT + 1) * 0.6).toFixed(1)} s) · format ${h.format ?? "?"}` + (bad ? ` · ${bad} unreadable lines` : "");
+  $("drop").classList.add("hidden");
+  S.t = 0; S.frac = 0; S.playing = false;
+  updatePlayButton();
+  drawTimeline();
+  render();
+}
+
+// Latest entry at or before tick t in a list sorted by tick
+function latest(list, t) {
+  let found = null;
+  for (const l of list) { if (l.t <= t) found = l; else break; }
+  return found;
+}
+
+function lastTick() { return S.byTick.length - 1; }
+function tickLine(t) {
+  for (let i = t; i >= 0; i--) if (S.ticks[i]) return S.ticks[i];
+  return null;
+}
+function key(who) { return who ? (who.k === "npc" ? "n" + who.i : who.k === "player" ? "p" + who.i : who.k) : ""; }
+function npcName(id) { return S.names.npc.get(id) ?? `NPC ${id}`; }
+function itemName(id) { return S.names.item.get(id) ?? `item ${id}`; }
+function whoLabel(who) {
+  if (!who) return "–";
+  if (who.k === "me") return "you";
+  if (who.k === "npc") return `${npcName(who.id)}#${who.i}`;
+  if (who.k === "player") return `player#${who.i}`;
+  return who.k;
+}
+
+// ---------- map ----------
+
+const map = $("map"), mctx = map.getContext("2d");
+
+function resizeCanvas(c) {
+  const r = c.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  return dpr;
+}
+
+// Actor positions at the current moment, eased between this tick and the next while playing
+function actorsNow() {
+  const a = tickLine(S.t);
+  if (!a) return [];
+  const b = $("smooth").checked && S.frac > 0 ? S.ticks[S.t + 1] : null;
+  const next = new Map();
+  if (b) for (const x of [b.me, ...(b.npcs || []), ...(b.players || [])]) if (x) next.set(key(x.who), x);
+  const out = [];
+  for (const x of [...(a.npcs || []), ...(a.players || []), a.me]) {
+    if (!x || x.lx == null) continue;
+    const n = next.get(key(x.who));
+    let lx = x.lx, ly = x.ly;
+    if (n && n.lx != null && Math.abs(n.lx - x.lx) <= 512 && Math.abs(n.ly - x.ly) <= 512) {
+      lx += (n.lx - x.lx) * S.frac; ly += (n.ly - x.ly) * S.frac;
+    }
+    out.push({ ...x, fx: lx / 128, fy: ly / 128 });
+  }
+  return out;
+}
+
+function cycleNow() {
+  const a = tickLine(S.t), b = S.ticks[S.t + 1];
+  if (!a) return 0;
+  return b ? a.c + (b.c - a.c) * S.frac : a.c + 30 * S.frac;
+}
+
+function render() {
+  drawMap();
+  drawSide();
+  drawLog();
+  drawTimelineCursor();
+  const tl = tickLine(S.t);
+  $("tickLabel").textContent = `tick ${S.t} / ${lastTick()}` + (tl ? ` · ${(S.t * 0.6).toFixed(1)} s` : "");
+}
+
+function drawMap() {
+  const dpr = resizeCanvas(map);
+  const W = map.width, H = map.height, Z = S.zoom * dpr;
+  mctx.fillStyle = css("--floor");
+  mctx.fillRect(0, 0, W, H);
+  if (!S.lines.length) return;
+
+  const actors = actorsNow();
+  const me = actors.find(a => a.who && a.who.k === "me");
+  if ($("follow").checked && me) { S.panX = me.fx; S.panY = me.fy; }
+  const plane = me ? me.p : 0;
+  // Scene coordinates, north up
+  const toX = x => W / 2 + (x - S.panX) * Z;
+  const toY = y => H / 2 - (y - S.panY) * Z;
+  S.view = { toX, toY, Z, W, H, dpr };
+
+  const scene = latest(S.scenes, S.t);
+  const x0 = Math.floor(S.panX - W / 2 / Z) - 1, x1 = Math.ceil(S.panX + W / 2 / Z) + 1;
+  const y0 = Math.floor(S.panY - H / 2 / Z) - 1, y1 = Math.ceil(S.panY + H / 2 / Z) + 1;
+
+  if (Z >= 8) {
+    mctx.strokeStyle = css("--grid"); mctx.lineWidth = 1;
+    mctx.beginPath();
+    for (let x = x0; x <= x1; x++) { mctx.moveTo(toX(x), 0); mctx.lineTo(toX(x), H); }
+    for (let y = y0; y <= y1; y++) { mctx.moveTo(0, toY(y)); mctx.lineTo(W, toY(y)); }
+    mctx.stroke();
+  }
+
+  const flags = scene?.collision?.[plane];
+  if (flags) {
+    mctx.fillStyle = css("--block");
+    mctx.strokeStyle = css("--wall");
+    mctx.lineWidth = Math.max(1.5, Z / 8);
+    mctx.beginPath();
+    for (let x = Math.max(0, x0); x <= Math.min(flags.length - 1, x1); x++) {
+      const col = flags[x];
+      for (let y = Math.max(0, y0); y <= Math.min(col.length - 1, y1); y++) {
+        const f = col[y];
+        if (!f) continue;
+        const L = toX(x), R = toX(x + 1), T = toY(y + 1), B = toY(y);
+        if (f & BLOCK_FULL) mctx.fillRect(L, T, R - L, B - T);
+        if (f & WALL_N) { mctx.moveTo(L, T); mctx.lineTo(R, T); }
+        if (f & WALL_S) { mctx.moveTo(L, B); mctx.lineTo(R, B); }
+        if (f & WALL_E) { mctx.moveTo(R, T); mctx.lineTo(R, B); }
+        if (f & WALL_W) { mctx.moveTo(L, T); mctx.lineTo(L, B); }
+      }
+    }
+    mctx.stroke();
+  }
+
+  const events = S.byTick[S.t] || [];
+  const prevEvents = S.byTick[S.t - 1] || [];
+  const font = Math.max(10, Math.min(13, Z * 0.7)) * dpr / Math.max(1, dpr * 0.75);
+  mctx.font = `${Math.round(font)}px ui-sans-serif, system-ui, sans-serif`;
+  mctx.textAlign = "center";
+
+  // Walk destination
+  if (me && me.dest && me.dest.sx != null) {
+    const dx = toX(me.dest.sx + 0.5), dy = toY(me.dest.sy + 0.5);
+    mctx.strokeStyle = css("--accent"); mctx.lineWidth = 2;
+    mctx.beginPath(); mctx.moveTo(dx, dy); mctx.lineTo(dx, dy - Z * 0.8); mctx.stroke();
+    mctx.fillStyle = css("--accent");
+    mctx.fillRect(dx, dy - Z * 0.8, Z * 0.4, Z * 0.25);
+  }
+
+  // Graphics on tiles, shown for two ticks
+  for (const l of [...prevEvents, ...events]) {
+    if (l.e !== "gfx" || l.sx == null || l.p !== plane) continue;
+    const gx = toX(l.lx / 128), gy = toY(l.ly / 128);
+    mctx.strokeStyle = css("--gfx"); mctx.lineWidth = 2;
+    mctx.beginPath(); mctx.arc(gx, gy, Z * 0.45, 0, Math.PI * 2); mctx.stroke();
+    if (Z >= 12) { mctx.fillStyle = css("--gfx"); mctx.fillText(`gfx ${l.id}`, gx, gy - Z * 0.55); }
+  }
+
+  // Actors
+  const byKey = new Map(actors.map(a => [key(a.who), a]));
+  for (const a of actors) {
+    if (a.p !== plane) continue;
+    const kind = a.who.k;
+    const size = kind === "npc" ? (S.names.size.get(a.who.id) || 1) : 1;
+    const color = kind === "me" ? css("--me") : kind === "npc" ? css("--npc") : css("--player");
+    const cx = toX(a.fx), cy = toY(a.fy), half = size * Z / 2;
+    mctx.fillStyle = color + "33";
+    mctx.strokeStyle = color; mctx.lineWidth = kind === "me" ? 2.5 : 1.5;
+    mctx.fillRect(cx - half, cy - half, half * 2, half * 2);
+    mctx.strokeRect(cx - half, cy - half, half * 2, half * 2);
+    // Where the server has it, which the drawn position is still walking towards
+    if (a.tile && a.tile.sx != null && Z >= 8) {
+      const L = toX(a.tile.sx), T = toY(a.tile.sy + size);
+      if (Math.abs(a.tile.sx + size / 2 - a.fx) > 0.05 || Math.abs(a.tile.sy + size / 2 - a.fy) > 0.05) {
+        mctx.save(); mctx.setLineDash([3, 3]); mctx.lineWidth = 1;
+        mctx.strokeRect(L, T, size * Z, size * Z);
+        mctx.restore();
+      }
+    }
+    // Facing: 0 south, 512 west, 1024 north, 1536 east
+    if (a.o != null) {
+      const ang = a.o / 2048 * Math.PI * 2;
+      const fx = -Math.sin(ang), fy = -Math.cos(ang);
+      mctx.beginPath(); mctx.moveTo(cx, cy); mctx.lineTo(cx + fx * half, cy - fy * half); mctx.stroke();
+    }
+    const label = [];
+    if (kind === "npc") label.push(npcName(a.who.id));
+    // Other players crowd banks: only name them when zoomed in, the tooltip has them otherwise
+    else if (kind === "player" && Z >= 32) label.push(`player#${a.who.i}`);
+    if (a.a != null && a.a !== -1) label.push(`anim ${a.a}`);
+    if (a.head != null) label.push(Array.isArray(a.head) ? `icon ${a.head.map(h => h[1]).join(",")}` : a.head.toLowerCase());
+    if (a.spot) label.push(a.spot.map(s => `spot ${s.id}`).join(" "));
+    if (a.skull != null) label.push(`skull ${a.skull}`);
+    if (label.length && (Z >= 10 || kind !== "player")) {
+      mctx.fillStyle = css("--ink");
+      label.forEach((s, i) => mctx.fillText(s, cx, cy - half - 4 - (label.length - 1 - i) * font * 1.1));
+    }
+    if (a.hp) {
+      const [ratio, scale] = a.hp, w = Math.max(half * 2, Z);
+      mctx.fillStyle = css("--hit"); mctx.fillRect(cx - w / 2, cy + half + 2, w, 4 * dpr);
+      mctx.fillStyle = css("--heal"); mctx.fillRect(cx - w / 2, cy + half + 2, w * ratio / Math.max(1, scale), 4 * dpr);
+    }
+  }
+
+  // Projectiles in flight at this moment
+  const cyc = cycleNow();
+  for (let t = Math.max(0, S.t - 12); t <= S.t; t++) {
+    for (const l of S.byTick[t] || []) {
+      if (l.e !== "proj" || l.start?.lx == null) continue;
+      if (cyc < l.startCycle || cyc > l.endCycle) continue;
+      const targetActor = l.to ? byKey.get(key(l.to)) : null;
+      const sx = l.start.lx / 128, sy = l.start.ly / 128;
+      const tx = targetActor ? targetActor.fx : (l.target?.lx ?? l.start.lx) / 128;
+      const ty = targetActor ? targetActor.fy : (l.target?.ly ?? l.start.ly) / 128;
+      const p = (cyc - l.startCycle) / Math.max(1, l.endCycle - l.startCycle);
+      mctx.strokeStyle = css("--proj") + "66"; mctx.lineWidth = 1.5;
+      mctx.setLineDash([4, 4]);
+      mctx.beginPath(); mctx.moveTo(toX(sx), toY(sy)); mctx.lineTo(toX(tx), toY(ty)); mctx.stroke();
+      mctx.setLineDash([]);
+      const px = toX(sx + (tx - sx) * p), py = toY(sy + (ty - sy) * p);
+      mctx.fillStyle = css("--proj");
+      mctx.beginPath(); mctx.arc(px, py, Math.max(3, Z * 0.2), 0, Math.PI * 2); mctx.fill();
+      if (Z >= 12) mctx.fillText(`proj ${l.id}`, px, py - Z * 0.35);
+    }
+  }
+
+  // Overhead text stays up for about five ticks in game
+  const said = new Map();
+  for (let t = Math.max(0, S.t - 4); t <= S.t; t++) {
+    for (const l of S.byTick[t] || []) if (l.e === "say" && l.who) said.set(key(l.who), l.text);
+  }
+  mctx.fillStyle = css("--lit");
+  for (const [k, text] of said) {
+    const a = byKey.get(k);
+    if (!a || a.p !== plane) continue;
+    const size = a.who.k === "npc" ? (S.names.size.get(a.who.id) || 1) : 1;
+    // Above the name label that NPCs carry, straight above the head otherwise
+    const lift = size * Z / 2 + 4 + (a.who.k === "npc" ? font * 1.2 : 0);
+    mctx.fillText(text.length > 60 ? text.slice(0, 57) + "…" : text, toX(a.fx), toY(a.fy) - lift);
+  }
+
+  // Hitsplats landed this tick
+  const splats = new Map();
+  for (const l of events) if (l.e === "hit") {
+    const k = key(l.who);
+    if (!splats.has(k)) splats.set(k, []);
+    splats.get(k).push(l);
+  }
+  for (const [k, hits] of splats) {
+    const a = byKey.get(k);
+    if (!a || a.p !== plane) continue;
+    hits.forEach((h, i) => {
+      const hx = toX(a.fx) + (i - (hits.length - 1) / 2) * Z * 0.9, hy = toY(a.fy);
+      const color = h.amount === 0 ? css("--block-hit") : h.type === 6 ? css("--heal") : css("--hit");
+      mctx.fillStyle = color;
+      mctx.beginPath(); mctx.arc(hx, hy, Math.max(8, Z * 0.42), 0, Math.PI * 2); mctx.fill();
+      mctx.fillStyle = "#fff";
+      mctx.textBaseline = "middle";
+      mctx.fillText(String(h.amount), hx, hy);
+      mctx.textBaseline = "alphabetic";
+    });
+  }
+}
+
+// ---------- side panel ----------
+
+function itemsAt(which, t) { return latest(S.items[which], t)?.items || []; }
+
+function currentTab(t) {
+  const tl = tickLine(t);
+  const fromTick = tl?.ui?.tab;
+  const fromEvent = latest(S.tabs, t)?.tab;
+  // A switch within the tick shows in ui_tab before the tick line
+  if (fromEvent != null && latest(S.tabs, t)?.t === t) return fromEvent;
+  return fromTick ?? fromEvent ?? 3;
+}
+
+function drawSide() {
+  const tl = tickLine(S.t), me = tl?.me;
+  const orb = (id, text, on) => { $(id).querySelector("b").textContent = text; $(id).classList.toggle("on", !!on); };
+  orb("orbHp", me ? `${me.hpNow}` : "–");
+  orb("orbPray", me ? `${me.prayNow}` : "–", tl?.ui?.quickPrayers === 1);
+  orb("orbRun", me ? `${Math.floor(me.run / 100)}%` : "–", tl?.ui?.runOn);
+  orb("orbSpec", me ? `${Math.floor(me.spec / 10)}%` : "–");
+
+  const gameTab = currentTab(S.t);
+  if ($("followTab").checked) S.viewTab = gameTab;
+  const tabs = $("tabs");
+  if (!tabs.childElementCount) {
+    TAB_SHORT.forEach((s, i) => {
+      const b = document.createElement("button");
+      b.textContent = s; b.title = TAB_NAMES[i];
+      b.onclick = () => { $("followTab").checked = false; S.viewTab = i; drawSide(); };
+      tabs.appendChild(b);
+    });
+  }
+  [...tabs.children].forEach((b, i) => {
+    b.classList.toggle("game", i === gameTab);
+    b.classList.toggle("view", i === S.viewTab);
+  });
+  $("panelName").textContent = TAB_NAMES[S.viewTab] + (S.viewTab === gameTab ? " (open in game)" : "");
+
+  const events = S.byTick[S.t] || [];
+  const clicks = events.filter(l => l.e === "click");
+  const panel = $("panel");
+  panel.innerHTML = "";
+
+  if (S.viewTab === 3) {
+    const inv = itemsAt("inv", S.t), before = itemsAt("inv", S.t - 1);
+    const clickedSlots = new Set(clicks.filter(c => c.widget && c.widget[0] === INVENTORY_INTERFACE).map(c => c.p0));
+    const g = div("grid inv");
+    for (let i = 0; i < 28; i++) {
+      const [id, qty] = inv[i] || [-1, 0];
+      const was = before[i] || [-1, 0];
+      const s = div("slot");
+      if (clickedSlots.has(i)) s.classList.add("clicked");
+      if (S.t > 0 && (was[0] !== id || was[1] !== qty)) s.classList.add("changed");
+      if (id > 0) {
+        if (qty > 1) s.appendChild(span("q", compact(qty)));
+        s.appendChild(span("n", itemName(id)));
+        s.title = `${itemName(id)} (${id}) ×${qty}`;
+      }
+      g.appendChild(s);
+    }
+    panel.appendChild(g);
+  } else if (S.viewTab === 4) {
+    const worn = itemsAt("worn", S.t), before = itemsAt("worn", S.t - 1);
+    const g = div("grid equip");
+    for (const [slot, name] of WORN_SLOTS) {
+      const [id, qty] = worn[slot] || [-1, 0];
+      const changed = S.t > 0 && (before[slot] || [-1])[0] !== id;
+      g.appendChild(div("k", name));
+      const v = div("", id > 0 ? itemName(id) + (qty > 1 ? ` ×${compact(qty)}` : "") : "–");
+      if (changed) v.style.background = "color-mix(in srgb, var(--lit) 30%, transparent)";
+      g.appendChild(v);
+    }
+    panel.appendChild(g);
+  } else if (S.viewTab === 5) {
+    const on = new Set(me?.prayers || []);
+    const was = new Set(tickLine(S.t - 1)?.me?.prayers || []);
+    const g = div("grid pray");
+    for (const [ids, label] of PRAYERS) {
+      const names = ids.split("|");
+      const s = div("slot", "");
+      s.appendChild(span("n", label));
+      const active = names.some(n => on.has(n));
+      if (active) s.classList.add("on");
+      if (S.t > 0 && active !== names.some(n => was.has(n))) s.classList.add("changed");
+      g.appendChild(s);
+    }
+    panel.appendChild(g);
+  } else if (S.viewTab === 6) {
+    const book = tl?.ui?.spellbook;
+    panel.appendChild(div("muted", `Spellbook: ${book == null ? "not recorded" : SPELLBOOKS[book] ?? book}`));
+  } else if (S.viewTab === 0) {
+    const u = tl?.ui;
+    panel.appendChild(div("muted", u ? `Attack style slot ${u.style} · auto retaliate ${u.autoRetaliate ? "on" : "off"}` : "Not recorded in this session"));
+  } else {
+    panel.appendChild(div("muted", "This tab isn't drawn in the replay"));
+  }
+
+  // Click list and where on screen each landed
+  $("clickCount").textContent = clicks.length ? String(clicks.length) : "";
+  const list = $("clicks");
+  list.innerHTML = "";
+  for (const c of clicks) {
+    const d = div("");
+    d.appendChild(document.createTextNode(`${c.option} ${c.target || ""}`.trim()));
+    if (c.widget) d.appendChild(span("w", `  [${c.widget[0]}.${c.widget[1]}${c.p0 >= 0 ? ` slot ${c.p0}` : ""}]`));
+    list.appendChild(d);
+  }
+  if (!clicks.length) list.appendChild(div("muted", "–"));
+  drawScreen(clicks);
+}
+
+function drawScreen(clicks) {
+  const c = $("screen"), ctx = c.getContext("2d");
+  const W = S.header?.canvasW, H = S.header?.canvasH;
+  const w = c.width, h = c.height;
+  ctx.clearRect(0, 0, w, h);
+  ctx.strokeStyle = css("--line"); ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
+  ctx.fillStyle = css("--muted"); ctx.font = "10px ui-sans-serif, system-ui, sans-serif";
+  if (!W || !H) { ctx.fillText("Click positions need a format 2 session", 8, h / 2); return; }
+  const scale = Math.min((w - 2) / W, (h - 2) / H), ox = (w - W * scale) / 2, oy = (h - H * scale) / 2;
+  ctx.strokeRect(ox, oy, W * scale, H * scale);
+  for (const k of clicks) {
+    if (k.mx == null) continue;
+    const x = ox + k.mx * scale, y = oy + k.my * scale;
+    // Yellow for walking, red for everything else, like the game's own click crosses
+    ctx.strokeStyle = k.action === "WALK" ? "#f1c40f" : "#e74c3c"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(x - 4, y - 4); ctx.lineTo(x + 4, y + 4); ctx.moveTo(x + 4, y - 4); ctx.lineTo(x - 4, y + 4); ctx.stroke();
+  }
+}
+
+function div(cls, text) { const d = document.createElement("div"); if (cls) d.className = cls; if (text != null) d.textContent = text; return d; }
+function span(cls, text) { const s = document.createElement("span"); s.className = cls; s.textContent = text; return s; }
+function compact(n) { return n >= 10_000_000 ? Math.floor(n / 1e6) + "M" : n >= 100_000 ? Math.floor(n / 1e3) + "K" : String(n); }
+
+// ---------- event log ----------
+
+const LOG_SKIP = new Set(["tick", "scene", "obj", "objdef", "npcdef", "itemdef", "stat"]);
+
+function describe(l) {
+  switch (l.e) {
+    case "anim": return `${whoLabel(l.who)} animation ${l.a}`;
+    case "spot": return `${whoLabel(l.who)} graphics ${l.spot.map(s => s.id).join(", ") || "cleared"}`;
+    case "gfx": return `graphic ${l.id} at ${l.x},${l.y}`;
+    case "proj": return `projectile ${l.id} ${whoLabel(l.from)} → ${whoLabel(l.to)}, ${l.endCycle - l.startCycle} cycles`;
+    case "hit": return `${whoLabel(l.who)} hit ${l.amount} (type ${l.type})`;
+    case "sound": return `sound ${l.id}${l.from ? " from " + whoLabel(l.from) : ""}${l.delay ? " delay " + l.delay : ""}`;
+    case "area_sound": return `area sound ${l.id} at ${l.x},${l.y}`;
+    case "click": return `click: ${l.option} ${l.target || ""}`.trim();
+    case "items": return `${l.which === "inv" ? "inventory" : "equipment"} changed`;
+    case "target": return `${whoLabel(l.who)} targets ${whoLabel(l.at)}`;
+    case "say": return `${whoLabel(l.who)} ${l.who?.k === "me" ? "say" : "says"} "${l.text}"`;
+    case "chat": return l.who !== undefined ? `${whoLabel(l.who)}: ${l.text}` : `[${l.type}] ${l.text}`;
+    case "var": return `var ${l.varbit !== -1 ? "varbit " + l.varbit : "varp " + l.varp} = ${l.value}`;
+    case "npc_spawn": return `${whoLabel(l.who)} appears at ${l.x},${l.y}`;
+    case "npc_gone": return `${whoLabel(l.who)} leaves${l.dead ? " (dead)" : ""}`;
+    case "npc_changed": return `${whoLabel(l.who)} changes from ${npcName(l.from)}`;
+    case "ui_tab": return `side panel → ${TAB_NAMES[l.tab] ?? l.tab}`;
+    case "look": return `${whoLabel(l.who)} appearance (combat ${l.cb ?? "?"})`;
+    case "moves": return `${whoLabel(l.who)} movement anims ${l.anims.join(", ")}`;
+    case "mark": return `MARK: ${l.note}`;
+    case "widget_open": return `interface ${l.group} opened`;
+    case "widget_close": return `interface ${l.group} closed`;
+    case "death": return `${whoLabel(l.who)} died`;
+    default: return `${l.e} ${JSON.stringify(Object.fromEntries(Object.entries(l).filter(([k]) => !["t", "c", "e"].includes(k)))).slice(0, 140)}`;
+  }
+}
+
+function drawLog() {
+  const log = $("log");
+  const showVars = $("showVars").checked;
+  log.innerHTML = "";
+  for (const l of S.byTick[S.t] || []) {
+    if (LOG_SKIP.has(l.e) || (l.e === "var" && !showVars) || (l.e === "obj" || l.e === "obj_gone") && l.init) continue;
+    const d = div(l.e === "mark" ? "mark" : "");
+    d.appendChild(span("c", `c${l.c} `));
+    d.appendChild(document.createTextNode(describe(l)));
+    log.appendChild(d);
+  }
+  if (!log.childElementCount) log.appendChild(div("c", "Nothing happened this tick"));
+}
+
+// ---------- timeline ----------
+
+const tlCanvas = $("timeline");
+let tlBase = null;
+
+function drawTimeline() {
+  const dpr = resizeCanvas(tlCanvas);
+  const ctx = tlCanvas.getContext("2d"), W = tlCanvas.width, H = tlCanvas.height, n = Math.max(1, lastTick());
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = css("--panel"); ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = css("--line"); ctx.strokeRect(0.5, 0.5, W - 1, H - 1);
+  const x = t => 4 * dpr + (W - 8 * dpr) * t / n;
+  S.byTick.forEach((events, t) => {
+    let anim = false, hit = false, mark = false;
+    for (const l of events) {
+      if (l.e === "anim" && l.who?.k === "npc" && l.a !== -1) anim = true;
+      if (l.e === "hit" && l.who?.k === "me") hit = true;
+      if (l.e === "mark") mark = true;
+    }
+    if (anim) { ctx.fillStyle = css("--npc"); ctx.fillRect(x(t), H * 0.62, Math.max(1, dpr), H * 0.3); }
+    if (hit) { ctx.fillStyle = css("--hit"); ctx.fillRect(x(t), H * 0.3, Math.max(1.5, dpr * 1.5), H * 0.3); }
+    if (mark) { ctx.fillStyle = css("--gfx"); ctx.fillRect(x(t) - dpr, 0, 3 * dpr, H); }
+  });
+  tlBase = ctx.getImageData(0, 0, W, H);
+}
+
+function drawTimelineCursor() {
+  if (!tlBase) return;
+  const ctx = tlCanvas.getContext("2d"), dpr = window.devicePixelRatio || 1;
+  ctx.putImageData(tlBase, 0, 0);
+  const W = tlCanvas.width, H = tlCanvas.height, n = Math.max(1, lastTick());
+  const x = 4 * dpr + (W - 8 * dpr) * (S.t + S.frac) / n;
+  ctx.fillStyle = css("--ink"); ctx.fillRect(x - dpr, 0, 2 * dpr, H);
+}
+
+function seekFromEvent(ev) {
+  const r = tlCanvas.getBoundingClientRect();
+  const p = Math.min(1, Math.max(0, (ev.clientX - r.left - 4) / (r.width - 8)));
+  seek(Math.round(p * lastTick()));
+}
+let tlDrag = false;
+tlCanvas.addEventListener("pointerdown", e => { tlDrag = true; tlCanvas.setPointerCapture(e.pointerId); seekFromEvent(e); });
+tlCanvas.addEventListener("pointermove", e => { if (tlDrag) seekFromEvent(e); });
+tlCanvas.addEventListener("pointerup", () => { tlDrag = false; });
+
+// ---------- playback ----------
+
+function seek(t) {
+  S.t = Math.max(0, Math.min(lastTick(), t));
+  S.frac = 0;
+  render();
+}
+
+function updatePlayButton() { $("play").textContent = S.playing ? "❚❚ Pause" : "▶ Play"; }
+
+function frame(now) {
+  if (S.playing) {
+    const dt = (now - S.lastFrame) / 600 * S.speed;
+    S.frac += dt;
+    while (S.frac >= 1) {
+      S.frac -= 1;
+      if (S.t >= lastTick()) { S.playing = false; S.frac = 0; updatePlayButton(); break; }
+      S.t++;
+      drawSide(); drawLog();
+    }
+    drawMap(); drawTimelineCursor();
+    $("tickLabel").textContent = `tick ${S.t} / ${lastTick()} · ${(S.t * 0.6).toFixed(1)} s`;
+  }
+  S.lastFrame = now;
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+$("play").onclick = () => { if (!S.lines.length) return; if (S.t >= lastTick()) S.t = 0; S.playing = !S.playing; updatePlayButton(); };
+$("prev").onclick = () => { S.playing = false; updatePlayButton(); seek(S.t - 1); };
+$("next").onclick = () => { S.playing = false; updatePlayButton(); seek(S.t + 1); };
+$("speed").onchange = e => { S.speed = Number(e.target.value); };
+$("showVars").onchange = drawLog;
+$("followTab").onchange = drawSide;
+$("smooth").onchange = drawMap;
+$("follow").onchange = drawMap;
+
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || !S.lines.length) return;
+  if (e.key === " ") { e.preventDefault(); $("play").click(); }
+  else if (e.key === "ArrowLeft") { e.preventDefault(); $("prev").click(); }
+  else if (e.key === "ArrowRight") { e.preventDefault(); $("next").click(); }
+});
+
+// Zoom, pan and hover on the map
+map.addEventListener("wheel", e => {
+  e.preventDefault();
+  S.zoom = Math.max(3, Math.min(80, S.zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+  drawMap();
+}, { passive: false });
+let drag = null;
+map.addEventListener("pointerdown", e => {
+  drag = { x: e.clientX, y: e.clientY, px: S.panX, py: S.panY };
+  map.setPointerCapture(e.pointerId); map.classList.add("dragging");
+});
+map.addEventListener("pointermove", e => {
+  if (drag) {
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (Math.abs(dx) + Math.abs(dy) > 3) $("follow").checked = false;
+    S.panX = drag.px - dx / S.zoom; S.panY = drag.py + dy / S.zoom;
+    drawMap();
+  }
+  hover(e);
+});
+map.addEventListener("pointerup", () => { drag = null; map.classList.remove("dragging"); });
+map.addEventListener("pointerleave", () => { $("tip").style.display = "none"; });
+
+function hover(e) {
+  const v = S.view, tip = $("tip");
+  if (!v || !S.lines.length) return;
+  const r = map.getBoundingClientRect();
+  const px = (e.clientX - r.left) * v.dpr, py = (e.clientY - r.top) * v.dpr;
+  const sx = S.panX + (px - v.W / 2) / v.Z, sy = S.panY - (py - v.H / 2) / v.Z;
+  const tx = Math.floor(sx), ty = Math.floor(sy);
+  const scene = latest(S.scenes, S.t);
+  const me = tickLine(S.t)?.me;
+  const lines = [];
+  // World coordinates follow from the player's own scene/world pair; instances translate per chunk
+  if (me && me.sx != null) lines.push(`tile ${me.x + tx - me.sx}, ${me.y + ty - me.sy}  (scene ${tx}, ${ty})`);
+  const f = scene?.collision?.[me?.p ?? 0]?.[tx]?.[ty];
+  if (f) lines.push(`collision 0x${f.toString(16)}`);
+  for (const a of actorsNow()) {
+    const size = a.who.k === "npc" ? (S.names.size.get(a.who.id) || 1) : 1;
+    if (Math.abs(sx - a.fx) <= size / 2 && Math.abs(sy - a.fy) <= size / 2) {
+      lines.push(`${whoLabel(a.who)}${a.a !== -1 ? ` · anim ${a.a}` : ""} · pose ${a.pose}${a.hp ? ` · hp ${a.hp[0]}/${a.hp[1]}` : ""}`);
+    }
+  }
+  if (!lines.length) { tip.style.display = "none"; return; }
+  tip.textContent = lines.join("\n");
+  tip.style.display = "block";
+  tip.style.left = Math.min(e.clientX - r.left + 14, r.width - tip.offsetWidth - 4) + "px";
+  tip.style.top = (e.clientY - r.top + 14) + "px";
+}
+
+// ---------- files ----------
+
+function openFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => load(String(reader.result), file.name);
+  reader.readAsText(file);
+}
+$("file").onchange = e => { if (e.target.files[0]) openFile(e.target.files[0]); };
+document.addEventListener("dragover", e => e.preventDefault());
+document.addEventListener("drop", e => { e.preventDefault(); if (e.dataTransfer.files[0]) openFile(e.dataTransfer.files[0]); });
+window.addEventListener("resize", () => { drawTimeline(); render(); });
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { drawTimeline(); render(); });
+render();
+</script>
+</body>
+</html>
