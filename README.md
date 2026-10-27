@@ -68,8 +68,8 @@ Streamers can do the same thing:
 </tr>
 </table>
 
-Right-click a replay to rename it, show it in its folder or delete it. **Import…** brings in a
-recording someone shared with you.
+Right-click a replay to rename or delete it. **Import…** brings in a recording someone shared with
+you. Recordings are saved in `.runelite/plugin-data/encounter-recorder/sessions`.
 
 ## What it never records
 

@@ -5,7 +5,6 @@ import java.awt.Color;
 import java.awt.Component;
 import java.awt.Cursor;
 import java.awt.Dimension;
-import java.awt.GridLayout;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.List;
@@ -15,7 +14,6 @@ import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JComponent;
-import javax.swing.JFileChooser;
 import javax.swing.JLabel;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
@@ -23,10 +21,10 @@ import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
-import javax.swing.filechooser.FileNameExtensionFilter;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.FontManager;
 import net.runelite.client.ui.PluginPanel;
+import net.runelite.client.util.Filepath;
 
 /**
  * The side panel: a Record section to start and stop recordings and drop markers, and a Replays section
@@ -107,16 +105,10 @@ class EncounterRecorderPanel extends PluginPanel
 		open.addActionListener(e -> plugin.openReplay(newest));
 		content.add(fill(open));
 		content.add(gap(4));
-		JPanel buttons = new JPanel(new GridLayout(1, 2, 4, 0));
 		JButton importButton = new JButton("Import…");
 		importButton.setToolTipText("Copy a recording from anywhere (one a friend sent, or one exported from the website) into your recordings");
 		importButton.addActionListener(e -> chooseImport());
-		JButton folder = new JButton("Folder");
-		folder.setToolTipText("Open the folder your recordings are saved in");
-		folder.addActionListener(e -> plugin.openSessionsFolder());
-		buttons.add(importButton);
-		buttons.add(folder);
-		content.add(fill(buttons));
+		content.add(fill(importButton));
 		content.add(gap(6));
 		replayList.setLayout(new BoxLayout(replayList, BoxLayout.Y_AXIS));
 		content.add(replayList);
@@ -188,7 +180,7 @@ class EncounterRecorderPanel extends PluginPanel
 		return row;
 	}
 
-	/** Right-click on a recording: open it, rename it, find it, or delete it */
+	/** Right-click on a recording: open it, rename it or delete it */
 	private JPopupMenu menu(Recordings.Entry e)
 	{
 		JPopupMenu menu = new JPopupMenu();
@@ -196,13 +188,10 @@ class EncounterRecorderPanel extends PluginPanel
 		open.addActionListener(a -> plugin.openReplay(e.fileName));
 		JMenuItem rename = new JMenuItem("Rename…");
 		rename.addActionListener(a -> rename(e));
-		JMenuItem folder = new JMenuItem("Show in folder");
-		folder.addActionListener(a -> plugin.openSessionsFolder());
 		JMenuItem delete = new JMenuItem("Delete…");
 		delete.addActionListener(a -> delete(e));
 		menu.add(open);
 		menu.add(rename);
-		menu.add(folder);
 		menu.addSeparator();
 		menu.add(delete);
 		return menu;
@@ -230,8 +219,7 @@ class EncounterRecorderPanel extends PluginPanel
 			showProblem("That's the recording being made now: stop it first.");
 			return;
 		}
-		String where = plugin.canTrash() ? "It goes to the Recycle Bin, where you can restore it." : "It's deleted for good: this computer has no recycle bin Java can use.";
-		int choice = JOptionPane.showConfirmDialog(this, "Delete " + e.name + "?\n" + where, "Delete recording",
+		int choice = JOptionPane.showConfirmDialog(this, "Delete " + e.name + "?\nIt's deleted for good.", "Delete recording",
 			JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
 		if (choice == JOptionPane.OK_OPTION)
 		{
@@ -241,12 +229,15 @@ class EncounterRecorderPanel extends PluginPanel
 
 	private void chooseImport()
 	{
-		JFileChooser chooser = new JFileChooser();
-		chooser.setDialogTitle("Import a recording");
-		chooser.setFileFilter(new FileNameExtensionFilter("Encounter Recorder recordings (*.jsonl)", "jsonl"));
-		if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION && chooser.getSelectedFile() != null)
+		List<Filepath> chosen = new Filepath.Chooser()
+			.setIsOpen()
+			.setAcceptsFiles()
+			.setDialogTitle("Import a recording")
+			.addExtensionFilter("Encounter Recorder recordings (*.jsonl)", "jsonl")
+			.showDialog(this);
+		if (chosen != null && !chosen.isEmpty())
 		{
-			plugin.importRecording(chooser.getSelectedFile());
+			plugin.importRecording(chosen.get(0));
 		}
 	}
 

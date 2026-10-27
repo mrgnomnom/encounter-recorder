@@ -75,7 +75,7 @@ class Recording
 				Filepath dir = directory.get().joinSegment("sessions");
 				dir.createDirectories();
 				// A name already in the folder gets the next number: TFA, TFA-1, TFA-2...
-				fileName = Recordings.numbered(Filepath.Unchecked.getFile(dir), fileName, null);
+				fileName = Recordings.numbered(Recordings.names(dir), fileName, null);
 				file = dir.joinSegment(fileName);
 				out = file.openBufferedWriter(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
 			}

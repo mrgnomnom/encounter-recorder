@@ -8,7 +8,6 @@ import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
-import java.io.File;
 import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.Collections;
@@ -332,9 +331,9 @@ public class EncounterRecorderPlugin extends Plugin
 		clientThread.invoke(() -> mark(note));
 	}
 
-	private File sessionsDir() throws IOException
+	private Filepath sessionsDir() throws IOException
 	{
-		return Filepath.Unchecked.getFile(sessionsRoot().joinSegment("sessions"));
+		return sessionsRoot().joinSegment("sessions");
 	}
 
 	/** Whether a recording is the one being written now, which can't be renamed or deleted */
@@ -344,22 +343,11 @@ public class EncounterRecorderPlugin extends Plugin
 		return r != null && r.getFileName().equals(fileName);
 	}
 
-	/** Whether deleted recordings can go to the Recycle Bin (or Trash) rather than being erased */
-	boolean canTrash()
-	{
-		return java.awt.Desktop.isDesktopSupported() && java.awt.Desktop.getDesktop().isSupported(java.awt.Desktop.Action.MOVE_TO_TRASH);
-	}
-
 	void deleteRecording(String fileName)
 	{
 		inBackground(() ->
 		{
-			File f = new File(sessionsDir(), fileName);
-			if (canTrash() && java.awt.Desktop.getDesktop().moveToTrash(f))
-			{
-				return null;
-			}
-			java.nio.file.Files.delete(f.toPath());
+			sessionsDir().joinSegment(fileName).delete();
 			return null;
 		}, "Couldn't delete " + fileName);
 	}
@@ -368,33 +356,32 @@ public class EncounterRecorderPlugin extends Plugin
 	{
 		inBackground(() ->
 		{
-			File dir = sessionsDir();
-			File to = new File(dir, Recordings.numbered(dir, Recordings.renamed(fileName, newName), fileName));
-			if (to.getName().equals(fileName))
+			Filepath dir = sessionsDir();
+			String to = Recordings.numbered(Recordings.names(dir), Recordings.renamed(fileName, newName), fileName);
+			if (!to.equals(fileName))
 			{
-				return null;
+				dir.joinSegment(fileName).moveTo(dir.joinSegment(to));
 			}
-			java.nio.file.Files.move(new File(dir, fileName).toPath(), to.toPath());
 			return null;
 		}, "Couldn't rename " + fileName);
 	}
 
 	/** Copies a recording from anywhere into the sessions folder, leaving the original where it was */
-	void importRecording(File from)
+	void importRecording(Filepath from)
 	{
 		inBackground(() ->
 		{
 			if (!Recordings.isRecording(from))
 			{
-				return from.getName() + " isn't an Encounter Recorder recording.";
+				return from.getFileName() + " isn't an Encounter Recorder recording.";
 			}
-			LocalDateTime time = LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(from.lastModified()), java.time.ZoneId.systemDefault());
-			File dir = sessionsDir();
-			dir.mkdirs();
-			File to = new File(dir, Recordings.numbered(dir, Recordings.importName(from.getName(), time), null));
-			java.nio.file.Files.copy(from.toPath(), to.toPath());
+			LocalDateTime time = LocalDateTime.ofInstant(from.getLastModifiedTime().toInstant(), java.time.ZoneId.systemDefault());
+			Filepath dir = sessionsDir();
+			dir.createDirectories();
+			String to = Recordings.numbered(Recordings.names(dir), Recordings.importName(from.getFileName(), time), null);
+			from.copyTo(dir.joinSegment(to));
 			return null;
-		}, "Couldn't import " + from.getName());
+		}, "Couldn't import " + from.getFileName());
 	}
 
 	private interface FileJob
@@ -440,7 +427,7 @@ public class EncounterRecorderPlugin extends Plugin
 			List<Recordings.Entry> found;
 			try
 			{
-				found = Recordings.list(Filepath.Unchecked.getFile(sessionsRoot().joinSegment("sessions")));
+				found = Recordings.list(sessionsDir());
 			}
 			catch (IOException e)
 			{
@@ -457,25 +444,6 @@ public class EncounterRecorderPlugin extends Plugin
 		}, "encounter-recorder-list");
 		lister.setDaemon(true);
 		lister.start();
-	}
-
-	void openSessionsFolder()
-	{
-		Thread opener = new Thread(() ->
-		{
-			try
-			{
-				Filepath dir = sessionsRoot().joinSegment("sessions");
-				dir.createDirectories();
-				LinkBrowser.open(Filepath.Unchecked.getFile(dir).getAbsolutePath());
-			}
-			catch (IOException e)
-			{
-				log.warn("Could not open the sessions folder", e);
-			}
-		}, "encounter-recorder-open");
-		opener.setDaemon(true);
-		opener.start();
 	}
 
 	/**

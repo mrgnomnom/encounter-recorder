@@ -49,34 +49,33 @@ public class PrivacyAndParsingTest
 	}
 
 	@Test
-	public void onlyRecordingsCanBeImported() throws java.io.IOException
+	public void onlyRecordingsCanBeImported()
 	{
-		java.io.File dir = java.nio.file.Files.createTempDirectory("recordings").toFile();
-		java.io.File good = new java.io.File(dir, "a.jsonl");
-		java.io.File bad = new java.io.File(dir, "b.jsonl");
-		java.nio.file.Files.writeString(good.toPath(), "{\"t\":0,\"c\":1,\"e\":\"header\",\"format\":5}\n");
-		java.nio.file.Files.writeString(bad.toPath(), "hello\n");
-		assertTrue(Recordings.isRecording(good));
-		assertFalse(Recordings.isRecording(bad));
+		assertTrue(Recordings.isHeader("{\"t\":0,\"c\":1,\"e\":\"header\",\"format\":5}"));
+		assertFalse(Recordings.isHeader("hello"));
+		assertFalse(Recordings.isHeader(null));
+		// An imported name keeps its stamp and number but loses anything a file name shouldn't hold
+		assertEquals("20261026-232157-TFA_2.jsonl", Recordings.importName("20261026-232157-TFA_2.jsonl", java.time.LocalDateTime.now()));
+		assertEquals("20261026-232157-a-b.jsonl", Recordings.importName("20261026-232157-a:b.jsonl", java.time.LocalDateTime.now()));
 	}
 
 	@Test
-	public void repeatedNamesGetTheNextNumber() throws java.io.IOException
+	public void repeatedNamesGetTheNextNumber()
 	{
-		java.io.File dir = java.nio.file.Files.createTempDirectory("recordings").toFile();
-		String first = Recordings.numbered(dir, "20261027-100000-TFA.jsonl", null);
+		java.util.List<String> folder = new java.util.ArrayList<>();
+		String first = Recordings.numbered(folder, "20261027-100000-TFA.jsonl", null);
 		assertEquals("20261027-100000-TFA.jsonl", first);
-		new java.io.File(dir, first).createNewFile();
-		String second = Recordings.numbered(dir, "20261027-110000-TFA.jsonl", null);
+		folder.add(first);
+		String second = Recordings.numbered(folder, "20261027-110000-TFA.jsonl", null);
 		assertEquals("20261027-110000-TFA_1.jsonl", second);
-		new java.io.File(dir, second).createNewFile();
-		assertEquals("20261027-120000-TFA_2.jsonl", Recordings.numbered(dir, "20261027-120000-TFA.jsonl", null));
+		folder.add(second);
+		assertEquals("20261027-120000-TFA_2.jsonl", Recordings.numbered(folder, "20261027-120000-TFA.jsonl", null));
 		assertEquals("TFA-1", Recordings.entry(second, 0, 0).name);
 		// Importing a numbered one that's taken moves on to the next number; renaming a file to its own name keeps it
-		assertEquals("20261027-110000-TFA_2.jsonl", Recordings.numbered(dir, second, null));
-		assertEquals(second, Recordings.numbered(dir, second, second));
+		assertEquals("20261027-110000-TFA_2.jsonl", Recordings.numbered(folder, second, null));
+		assertEquals(second, Recordings.numbered(folder, second, second));
 		// Same name, any case
-		assertEquals("20261027-130000-tfa_2.jsonl", Recordings.numbered(dir, "20261027-130000-tfa.jsonl", null));
+		assertEquals("20261027-130000-tfa_2.jsonl", Recordings.numbered(folder, "20261027-130000-tfa.jsonl", null));
 	}
 
 	@Test

@@ -1,10 +1,8 @@
 package com.encounterrecorder;
 
 import java.io.BufferedReader;
-import java.io.File;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
+import java.util.Collection;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
@@ -13,6 +11,9 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+import net.runelite.client.util.Filepath;
 
 /**
  * The recordings in the sessions folder, for the panel's list: newest first, each shown by the name it was
@@ -53,23 +54,33 @@ final class Recordings
 	{
 	}
 
-	static List<Entry> list(File dir)
+	static List<Entry> list(Filepath dir) throws IOException
 	{
 		List<Entry> out = new ArrayList<>();
-		File[] files = dir == null ? null : dir.listFiles((d, n) -> n.endsWith(".jsonl"));
-		if (files == null)
+		for (Filepath f : files(dir))
 		{
-			return out;
-		}
-		for (File f : files)
-		{
-			if (f.isFile())
-			{
-				out.add(entry(f.getName(), f.lastModified(), f.length()));
-			}
+			out.add(entry(f.getFileName(), f.getLastModifiedTime().toMillis(), f.size()));
 		}
 		out.sort(Comparator.comparing((Entry e) -> e.when).reversed().thenComparing(e -> e.fileName));
 		return out;
+	}
+
+	/** The names of the recordings in the folder */
+	static List<String> names(Filepath dir) throws IOException
+	{
+		return files(dir).stream().map(Filepath::getFileName).collect(Collectors.toList());
+	}
+
+	private static List<Filepath> files(Filepath dir) throws IOException
+	{
+		if (!dir.isDirectory())
+		{
+			return new ArrayList<>();
+		}
+		try (Stream<Filepath> walk = dir.walk(1))
+		{
+			return walk.filter(f -> f.getFileName().endsWith(".jsonl") && f.isFile()).collect(Collectors.toList());
+		}
 	}
 
 	static Entry entry(String fileName, long modifiedMs, long bytes)
@@ -108,17 +119,21 @@ final class Recordings
 	}
 
 	/** Whether a file is a recording: its first line is a recording's header */
-	static boolean isRecording(File f)
+	static boolean isRecording(Filepath f)
 	{
-		try (BufferedReader r = Files.newBufferedReader(f.toPath(), StandardCharsets.UTF_8))
+		try (BufferedReader r = f.openBufferedReader())
 		{
-			String first = r.readLine();
-			return first != null && first.trim().startsWith("{") && HEADER.matcher(first).find();
+			return isHeader(r.readLine());
 		}
 		catch (IOException | RuntimeException e)
 		{
 			return false;
 		}
+	}
+
+	static boolean isHeader(String firstLine)
+	{
+		return firstLine != null && firstLine.trim().startsWith("{") && HEADER.matcher(firstLine).find();
 	}
 
 	/**
@@ -127,9 +142,12 @@ final class Recordings
 	 */
 	static String importName(String fileName, LocalDateTime fileTime)
 	{
-		if (FILE.matcher(fileName).matches())
+		Matcher m = FILE.matcher(fileName);
+		if (m.matches())
 		{
-			return fileName;
+			// Keep its stamp and any number, but nothing a file name shouldn't hold
+			Matcher counted = COUNTED.matcher(m.group(2));
+			return m.group(1) + "-" + (counted.matches() ? Recording.safeLabel(counted.group(1)) + "_" + counted.group(2) : Recording.safeLabel(m.group(2))) + ".jsonl";
 		}
 		String base = fileName.toLowerCase().endsWith(".jsonl") ? fileName.substring(0, fileName.length() - 6) : fileName;
 		return STAMP.format(fileTime) + "-" + Recording.safeLabel(base) + ".jsonl";
@@ -145,22 +163,25 @@ final class Recordings
 
 	/**
 	 * A file name whose shown name no other recording in the folder has: a repeated name gets the next
-	 * number, so TFA, then TFA-1, TFA-2... Leaves out the file called {@code except}, the one being renamed.
+	 * number, so TFA, then TFA-1, TFA-2... {@code existing} is the folder's file names, from {@link #names};
+	 * the file called {@code except}, the one being renamed, is left out.
 	 */
-	static String numbered(File dir, String fileName, String except)
+	static String numbered(Collection<String> existing, String fileName, String except)
 	{
+		List<String> files = new ArrayList<>();
 		List<String> taken = new ArrayList<>();
-		for (Entry e : list(dir))
+		for (String name : existing)
 		{
-			if (!e.fileName.equals(except))
+			if (!name.equals(except))
 			{
-				taken.add(e.name.toLowerCase());
+				files.add(name.toLowerCase());
+				taken.add(entry(name, 0, 0).name.toLowerCase());
 			}
 		}
 		Matcher m = FILE.matcher(fileName);
 		String stamp = m.matches() ? m.group(1) : STAMP.format(LocalDateTime.now());
 		String label = m.matches() ? m.group(2) : Recording.safeLabel(fileName.replaceAll("(?i)\\.jsonl$", ""));
-		if (isFree(dir, stamp, label, taken, except))
+		if (isFree(files, stamp, label, taken))
 		{
 			return stamp + "-" + label + ".jsonl";
 		}
@@ -168,16 +189,16 @@ final class Recordings
 		String base = counted.matches() ? counted.group(1) : label;
 		for (int n = 1; ; n++)
 		{
-			if (isFree(dir, stamp, base + "_" + n, taken, except))
+			if (isFree(files, stamp, base + "_" + n, taken))
 			{
 				return stamp + "-" + base + "_" + n + ".jsonl";
 			}
 		}
 	}
 
-	private static boolean isFree(File dir, String stamp, String label, List<String> taken, String except)
+	private static boolean isFree(List<String> files, String stamp, String label, List<String> taken)
 	{
 		String file = stamp + "-" + label + ".jsonl";
-		return !taken.contains(shownName(label).toLowerCase()) && (file.equals(except) || !new File(dir, file).exists());
+		return !taken.contains(shownName(label).toLowerCase()) && !files.contains(file.toLowerCase());
 	}
 }
