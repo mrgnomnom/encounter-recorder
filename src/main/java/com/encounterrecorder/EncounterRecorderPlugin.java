@@ -134,8 +134,11 @@ public class EncounterRecorderPlugin extends Plugin
 	@Inject
 	private ConfigManager configManager;
 
-	/** The replay's address before it was hosted: the dev server */
-	private static final String OLD_REPLAY_URL = "http://127.0.0.1:5180/";
+	/**
+	 * The one page Open replay goes to. It's fixed rather than a setting so nobody can be talked into
+	 * pointing the plugin at a lookalike page that would ask for their RuneLite folders
+	 */
+	static final String REPLAY_URL = "https://encounter-replay.pages.dev/";
 	@Inject
 	private ClientToolbar clientToolbar;
 	@Inject
@@ -214,12 +217,8 @@ public class EncounterRecorderPlugin extends Plugin
 	@Override
 	protected void startUp()
 	{
-		// RuneLite saves each setting's default when a plugin first starts, so the replay's old local address
-		// stuck after the default moved to the hosted page: clear it so the current default applies
-		if (OLD_REPLAY_URL.equals(configManager.getConfiguration(EncounterRecorderConfig.GROUP, "replayUrl")))
-		{
-			configManager.unsetConfiguration(EncounterRecorderConfig.GROUP, "replayUrl");
-		}
+		// The replay's address used to be a setting: drop whatever was saved for it
+		configManager.unsetConfiguration(EncounterRecorderConfig.GROUP, "replayUrl");
 		// "Player names" (on unless turned off) became "Hide player names": carry over a choice to leave them out
 		String oldNames = configManager.getConfiguration(EncounterRecorderConfig.GROUP, "recordPlayerNames");
 		if (oldNames != null)
@@ -485,28 +484,13 @@ public class EncounterRecorderPlugin extends Plugin
 	 */
 	void openReplay(String fileName)
 	{
-		String url = replayLink(config.replayUrl(), fileName);
-		if (url == null)
-		{
-			log.warn("The replay address must start with http:// or https://: {}", config.replayUrl());
-			return;
-		}
-		LinkBrowser.browse(url);
+		LinkBrowser.browse(replayLink(fileName));
 	}
 
-	/** The replay page's address, opening a recording by its file name; null for an address that isn't a web page */
-	static String replayLink(String address, String fileName)
+	/** The replay page's address, opening a recording by its file name */
+	static String replayLink(String fileName)
 	{
-		String base = address == null ? "" : address.trim();
-		if (!base.startsWith("http://") && !base.startsWith("https://"))
-		{
-			return null;
-		}
-		if (base.contains("#"))
-		{
-			base = base.substring(0, base.indexOf('#'));
-		}
-		return fileName == null ? base : base + "#session=" + fileName;
+		return fileName == null ? REPLAY_URL : REPLAY_URL + "#session=" + fileName;
 	}
 
 	private void startRecording(String label, boolean automatic, Set<Integer> watched)

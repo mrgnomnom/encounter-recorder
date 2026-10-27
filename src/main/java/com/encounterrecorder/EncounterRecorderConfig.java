@@ -34,13 +34,6 @@ public interface EncounterRecorderConfig extends Config
 	)
 	String displaySection = "display";
 
-	@ConfigSection(
-		name = "Replay",
-		description = "Where the Open replay button takes you",
-		position = 30
-	)
-	String replaySection = "replay";
-
 	@ConfigItem(
 		keyName = "autoRecordNpcIds",
 		name = "Auto-record NPC IDs",
@@ -151,17 +144,5 @@ public interface EncounterRecorderConfig extends Config
 	default boolean showIndicator()
 	{
 		return true;
-	}
-
-	@ConfigItem(
-		keyName = "replayUrl",
-		name = "Replay address",
-		description = "The Encounter Replay page the Open replay button opens. It reads your recordings and game cache from your own RuneLite folder; nothing is uploaded.",
-		section = replaySection,
-		position = 31
-	)
-	default String replayUrl()
-	{
-		return "https://encounter-replay.pages.dev/";
 	}
 }
