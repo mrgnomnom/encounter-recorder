@@ -162,6 +162,6 @@ public interface EncounterRecorderConfig extends Config
 	)
 	default String replayUrl()
 	{
-		return "http://127.0.0.1:5180/";
+		return "https://encounter-replay.pages.dev/";
 	}
 }
