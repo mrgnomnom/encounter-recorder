@@ -2,7 +2,9 @@
 
 **Record your Old School RuneScape fights, then play them back tick by tick.**
 
-![Stepping through a recording in Encounter Replay](docs/images/replay.gif)
+![A 5-man Fractured Archive raid against Ocellus, played back tick by tick](docs/images/bossing.webp)
+
+*Bossing: a 5-man Fractured Archive raid, switching who to follow, with player names hidden.*
 
 ## Why
 
@@ -19,7 +21,9 @@ Encounter Recorder is a RuneLite plugin that writes down what your game client k
 moment, follow any player and check exactly what state the game was in. Boss fights, raids, PvP, a
 skilling trip: anything you can see, you can record.
 
-![A Moia fight from a 5-man Fractured Archive raid, paused on tick 816](docs/images/moia.png)
+![A PK fight played back tick by tick](docs/images/pvp.webp)
+
+*PvP: a one-on-one PK fight, with your gear switches, prayers and clicks as they happened.*
 
 ## Local, private and free
 
