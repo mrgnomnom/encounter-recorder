@@ -31,6 +31,55 @@ public class PrivacyAndParsingTest
 	}
 
 	@Test
+	public void recordingsAreListedByTheirNameNewestFirst()
+	{
+		assertEquals("Demo", Recordings.entry("20261026-232157-Demo.jsonl", 0, 1).name);
+		assertEquals("vardorvis p2", Recordings.entry("20261025-101500-vardorvis-p2.jsonl", 0, 1).name);
+		assertEquals("my-own-file", Recordings.entry("my-own-file.jsonl", 0, 1).name);
+		assertEquals(2026, Recordings.entry("20261026-232157-Demo.jsonl", 0, 1).when.getYear());
+	}
+
+	@Test
+	public void importedAndRenamedRecordingsKeepTheirPlaceInTime()
+	{
+		java.time.LocalDateTime t = java.time.LocalDateTime.of(2026, 10, 27, 9, 5, 0);
+		assertEquals("20261026-232157-Demo.jsonl", Recordings.importName("20261026-232157-Demo.jsonl", t));
+		assertEquals("20261027-090500-demo-ticks-8-16.jsonl", Recordings.importName("demo-ticks-8-16.jsonl", t));
+		assertEquals("20261026-232157-Poopsoul-fight.jsonl", Recordings.renamed("20261026-232157-Demo.jsonl", "Poopsoul fight"));
+	}
+
+	@Test
+	public void onlyRecordingsCanBeImported() throws java.io.IOException
+	{
+		java.io.File dir = java.nio.file.Files.createTempDirectory("recordings").toFile();
+		java.io.File good = new java.io.File(dir, "a.jsonl");
+		java.io.File bad = new java.io.File(dir, "b.jsonl");
+		java.nio.file.Files.writeString(good.toPath(), "{\"t\":0,\"c\":1,\"e\":\"header\",\"format\":5}\n");
+		java.nio.file.Files.writeString(bad.toPath(), "hello\n");
+		assertTrue(Recordings.isRecording(good));
+		assertFalse(Recordings.isRecording(bad));
+	}
+
+	@Test
+	public void repeatedNamesGetTheNextNumber() throws java.io.IOException
+	{
+		java.io.File dir = java.nio.file.Files.createTempDirectory("recordings").toFile();
+		String first = Recordings.numbered(dir, "20261027-100000-TFA.jsonl", null);
+		assertEquals("20261027-100000-TFA.jsonl", first);
+		new java.io.File(dir, first).createNewFile();
+		String second = Recordings.numbered(dir, "20261027-110000-TFA.jsonl", null);
+		assertEquals("20261027-110000-TFA_1.jsonl", second);
+		new java.io.File(dir, second).createNewFile();
+		assertEquals("20261027-120000-TFA_2.jsonl", Recordings.numbered(dir, "20261027-120000-TFA.jsonl", null));
+		assertEquals("TFA-1", Recordings.entry(second, 0, 0).name);
+		// Importing a numbered one that's taken moves on to the next number; renaming a file to its own name keeps it
+		assertEquals("20261027-110000-TFA_2.jsonl", Recordings.numbered(dir, second, null));
+		assertEquals(second, Recordings.numbered(dir, second, second));
+		// Same name, any case
+		assertEquals("20261027-130000-tfa_2.jsonl", Recordings.numbered(dir, "20261027-130000-tfa.jsonl", null));
+	}
+
+	@Test
 	public void replayLinksCarryOnlyTheFileName()
 	{
 		assertEquals("https://replay.example/#session=20261026-131912-GE2.jsonl",

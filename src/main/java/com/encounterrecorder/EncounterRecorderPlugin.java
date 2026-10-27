@@ -8,10 +8,13 @@ import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
+import java.io.File;
 import java.io.IOException;
+import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
@@ -230,6 +233,7 @@ public class EncounterRecorderPlugin extends Plugin
 		autoIds = parseIds(config.autoRecordNpcIds());
 		panel = new EncounterRecorderPanel(this);
 		panel.showRecordPlayers(config.recordOtherPlayers());
+		refreshReplays();
 		navButton = NavigationButton.builder()
 			.tooltip("Encounter Recorder")
 			.icon(icon())
@@ -327,6 +331,133 @@ public class EncounterRecorderPlugin extends Plugin
 	void requestMark(String note)
 	{
 		clientThread.invoke(() -> mark(note));
+	}
+
+	private File sessionsDir() throws IOException
+	{
+		return Filepath.Unchecked.getFile(sessionsRoot().joinSegment("sessions"));
+	}
+
+	/** Whether a recording is the one being written now, which can't be renamed or deleted */
+	boolean isRecordingNow(String fileName)
+	{
+		Recording r = recording;
+		return r != null && r.getFileName().equals(fileName);
+	}
+
+	/** Whether deleted recordings can go to the Recycle Bin (or Trash) rather than being erased */
+	boolean canTrash()
+	{
+		return java.awt.Desktop.isDesktopSupported() && java.awt.Desktop.getDesktop().isSupported(java.awt.Desktop.Action.MOVE_TO_TRASH);
+	}
+
+	void deleteRecording(String fileName)
+	{
+		inBackground(() ->
+		{
+			File f = new File(sessionsDir(), fileName);
+			if (canTrash() && java.awt.Desktop.getDesktop().moveToTrash(f))
+			{
+				return null;
+			}
+			java.nio.file.Files.delete(f.toPath());
+			return null;
+		}, "Couldn't delete " + fileName);
+	}
+
+	void renameRecording(String fileName, String newName)
+	{
+		inBackground(() ->
+		{
+			File dir = sessionsDir();
+			File to = new File(dir, Recordings.numbered(dir, Recordings.renamed(fileName, newName), fileName));
+			if (to.getName().equals(fileName))
+			{
+				return null;
+			}
+			java.nio.file.Files.move(new File(dir, fileName).toPath(), to.toPath());
+			return null;
+		}, "Couldn't rename " + fileName);
+	}
+
+	/** Copies a recording from anywhere into the sessions folder, leaving the original where it was */
+	void importRecording(File from)
+	{
+		inBackground(() ->
+		{
+			if (!Recordings.isRecording(from))
+			{
+				return from.getName() + " isn't an Encounter Recorder recording.";
+			}
+			LocalDateTime time = LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(from.lastModified()), java.time.ZoneId.systemDefault());
+			File dir = sessionsDir();
+			dir.mkdirs();
+			File to = new File(dir, Recordings.numbered(dir, Recordings.importName(from.getName(), time), null));
+			java.nio.file.Files.copy(from.toPath(), to.toPath());
+			return null;
+		}, "Couldn't import " + from.getName());
+	}
+
+	private interface FileJob
+	{
+		/** Does the work; returns a message for the player when it can't be done, or null */
+		String run() throws IOException;
+	}
+
+	/** File work off the game's threads, then the list refreshed and any problem shown */
+	private void inBackground(FileJob job, String failure)
+	{
+		Thread worker = new Thread(() ->
+		{
+			String problem;
+			try
+			{
+				problem = job.run();
+			}
+			catch (IOException | RuntimeException e)
+			{
+				log.warn(failure, e);
+				problem = failure + ": " + e.getMessage();
+			}
+			String message = problem;
+			SwingUtilities.invokeLater(() ->
+			{
+				if (panel != null && message != null)
+				{
+					panel.showProblem(message);
+				}
+			});
+			refreshReplays();
+		}, "encounter-recorder-files");
+		worker.setDaemon(true);
+		worker.start();
+	}
+
+	/** Lists the recordings in the background and shows them in the panel */
+	void refreshReplays()
+	{
+		Thread lister = new Thread(() ->
+		{
+			List<Recordings.Entry> found;
+			try
+			{
+				found = Recordings.list(Filepath.Unchecked.getFile(sessionsRoot().joinSegment("sessions")));
+			}
+			catch (IOException e)
+			{
+				found = Collections.emptyList();
+			}
+			List<Recordings.Entry> entries = found;
+			SwingUtilities.invokeLater(() ->
+			{
+				if (panel != null)
+				{
+					panel.showReplays(entries);
+				}
+			});
+		}, "encounter-recorder-list");
+		lister.setDaemon(true);
+		lister.start();
 	}
 
 	void openSessionsFolder()
@@ -471,6 +602,7 @@ public class EncounterRecorderPlugin extends Plugin
 				if (panel != null)
 				{
 					panel.showStopped(name);
+					refreshReplays();
 				}
 			});
 		}

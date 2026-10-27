@@ -38,7 +38,7 @@ class Recording
 	private volatile boolean failed;
 
 	@Getter
-	private final String fileName;
+	private volatile String fileName;
 	@Getter
 	private final boolean automatic;
 	/**
@@ -74,6 +74,8 @@ class Recording
 			{
 				Filepath dir = directory.get().joinSegment("sessions");
 				dir.createDirectories();
+				// A name already in the folder gets the next number: TFA, TFA-1, TFA-2...
+				fileName = Recordings.numbered(Filepath.Unchecked.getFile(dir), fileName, null);
 				file = dir.joinSegment(fileName);
 				out = file.openBufferedWriter(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
 			}
