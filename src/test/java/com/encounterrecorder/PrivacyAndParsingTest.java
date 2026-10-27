@@ -19,6 +19,18 @@ public class PrivacyAndParsingTest
 	}
 
 	@Test
+	public void hiddenNamesAreTakenOutOfTextHoweverTheyreWritten()
+	{
+		Set<String> names = Set.of("Mr Gnome", "Zezima", "Bob");
+		assertEquals("<player> wishes to trade with you.", Names.scrub("Mr Gnome wishes to trade with you.", names));
+		assertEquals("Walk here <player>  (level-126)", Names.scrub("Walk here zezima  (level-126)", names));
+		assertEquals("<player> and <player>", Names.scrub("Mr\u00A0Gnome and mr_gnome", names));
+		// Only whole names: "Bobcat" isn't Bob
+		assertEquals("A Bobcat bites <player>.", Names.scrub("A Bobcat bites Bob.", names));
+		assertEquals("No names here", Names.scrub("No names here", names));
+	}
+
+	@Test
 	public void replayLinksCarryOnlyTheFileName()
 	{
 		assertEquals("https://replay.example/#session=20261026-131912-GE2.jsonl",

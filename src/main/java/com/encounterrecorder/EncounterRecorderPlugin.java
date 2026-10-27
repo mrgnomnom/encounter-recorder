@@ -130,6 +130,9 @@ public class EncounterRecorderPlugin extends Plugin
 	private Gson gson;
 	@Inject
 	private ConfigManager configManager;
+
+	/** The replay's address before it was hosted: the dev server */
+	private static final String OLD_REPLAY_URL = "http://127.0.0.1:5180/";
 	@Inject
 	private ClientToolbar clientToolbar;
 	@Inject
@@ -208,6 +211,22 @@ public class EncounterRecorderPlugin extends Plugin
 	@Override
 	protected void startUp()
 	{
+		// RuneLite saves each setting's default when a plugin first starts, so the replay's old local address
+		// stuck after the default moved to the hosted page: clear it so the current default applies
+		if (OLD_REPLAY_URL.equals(configManager.getConfiguration(EncounterRecorderConfig.GROUP, "replayUrl")))
+		{
+			configManager.unsetConfiguration(EncounterRecorderConfig.GROUP, "replayUrl");
+		}
+		// "Player names" (on unless turned off) became "Hide player names": carry over a choice to leave them out
+		String oldNames = configManager.getConfiguration(EncounterRecorderConfig.GROUP, "recordPlayerNames");
+		if (oldNames != null)
+		{
+			if ("false".equals(oldNames))
+			{
+				configManager.setConfiguration(EncounterRecorderConfig.GROUP, "hidePlayerNames", true);
+			}
+			configManager.unsetConfiguration(EncounterRecorderConfig.GROUP, "recordPlayerNames");
+		}
 		autoIds = parseIds(config.autoRecordNpcIds());
 		panel = new EncounterRecorderPanel(this);
 		panel.showRecordPlayers(config.recordOtherPlayers());
@@ -370,7 +389,7 @@ public class EncounterRecorderPlugin extends Plugin
 		moveSets.clear();
 		// Fixed for the whole session, so a file never switches halfway between with and without players
 		players = config.recordOtherPlayers();
-		names = config.recordPlayerNames();
+		names = !config.hidePlayerNames();
 		seenProjectiles.clear();
 
 		JsonObject header = emit("header");
@@ -967,7 +986,7 @@ public class EncounterRecorderPlugin extends Plugin
 		nameOf(line, player);
 	}
 
-	/** Adds a player's name, when the "Player names" option is on */
+	/** Adds a player's name, unless "Hide player names" is on */
 	private void nameOf(JsonObject line, Player player)
 	{
 		if (names && player.getName() != null)
@@ -1040,7 +1059,7 @@ public class EncounterRecorderPlugin extends Plugin
 			o.add(w.getHeight());
 			o.add(w.getType());
 			o.add(w.getSpriteId());
-			o.add(w.getText() == null ? "" : Text.removeTags(w.getText()));
+			o.add(w.getText() == null ? "" : hideNames(Text.removeTags(w.getText())));
 			o.add(w.getTextColor());
 			o.add(w.getOpacity());
 			o.add(w.getItemId());
@@ -1389,7 +1408,30 @@ public class EncounterRecorderPlugin extends Plugin
 			// The speaker by index only: the name is used to find them and never written
 			line.add("who", Snap.ref(client, speaker(event.getName())));
 		}
-		line.addProperty("text", Text.removeTags(event.getMessage()));
+		line.addProperty("text", hideNames(Text.removeTags(event.getMessage())));
+	}
+
+	/** With "Hide player names" on, the names of everyone in the scene taken out of a piece of text */
+	private String hideNames(String text)
+	{
+		if (names || text == null)
+		{
+			return text;
+		}
+		java.util.Set<String> present = new java.util.HashSet<>();
+		for (Player player : client.getTopLevelWorldView().players())
+		{
+			if (player.getName() != null)
+			{
+				present.add(Text.removeTags(player.getName()));
+			}
+		}
+		Player me = client.getLocalPlayer();
+		if (me != null && me.getName() != null)
+		{
+			present.add(Text.removeTags(me.getName()));
+		}
+		return Names.scrub(text, present);
 	}
 
 	private Player speaker(String name)
@@ -1419,7 +1461,7 @@ public class EncounterRecorderPlugin extends Plugin
 		}
 		JsonObject line = emit("say");
 		line.add("who", Snap.ref(client, actor));
-		line.addProperty("text", Text.removeTags(event.getOverheadText()));
+		line.addProperty("text", hideNames(Text.removeTags(event.getOverheadText())));
 	}
 
 	@Subscribe
@@ -1462,8 +1504,8 @@ public class EncounterRecorderPlugin extends Plugin
 			return;
 		}
 		JsonObject line = emit("click");
-		line.addProperty("option", Text.removeTags(event.getMenuOption()));
-		line.addProperty("target", Snap.menuTarget(event.getMenuAction(), event.getMenuTarget()));
+		line.addProperty("option", hideNames(Text.removeTags(event.getMenuOption())));
+		line.addProperty("target", hideNames(Snap.menuTarget(event.getMenuAction(), event.getMenuTarget())));
 		line.addProperty("action", event.getMenuAction() == null ? null : event.getMenuAction().name());
 		line.addProperty("id", event.getId());
 		line.addProperty("p0", event.getParam0());

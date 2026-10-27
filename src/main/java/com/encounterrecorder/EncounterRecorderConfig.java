@@ -92,16 +92,16 @@ public interface EncounterRecorderConfig extends Config
 	}
 
 	@ConfigItem(
-		keyName = "recordPlayerNames",
-		name = "Player names",
-		description = "Record players' names (yours and those around you) so replays can label them. "
-			+ "Turn off to store players by index only. Files stay on your computer either way.",
+		keyName = "hidePlayerNames",
+		name = "Hide player names",
+		description = "Leave every player's name out of recordings, yours too: players are stored by index, and names "
+			+ "of players nearby are replaced with <player> in chat, game messages and menu targets.",
 		section = whatSection,
 		position = 12
 	)
-	default boolean recordPlayerNames()
+	default boolean hidePlayerNames()
 	{
-		return true;
+		return false;
 	}
 
 	@ConfigItem(
