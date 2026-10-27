@@ -19,6 +19,15 @@ public class PrivacyAndParsingTest
 	}
 
 	@Test
+	public void replayLinksCarryOnlyTheFileName()
+	{
+		assertEquals("https://replay.example/#session=20261026-131912-GE2.jsonl",
+			EncounterRecorderPlugin.replayLink(" https://replay.example/#old ", "20261026-131912-GE2.jsonl"));
+		assertEquals("http://127.0.0.1:5180/", EncounterRecorderPlugin.replayLink("http://127.0.0.1:5180/", null));
+		assertEquals(null, EncounterRecorderPlugin.replayLink("file:///C:/evil", "x.jsonl"));
+	}
+
+	@Test
 	public void bankPinInterfacesAreRecognised()
 	{
 		assertTrue(EncounterRecorderPlugin.isBankPinInterface(InterfaceID.BANKPIN_KEYPAD));

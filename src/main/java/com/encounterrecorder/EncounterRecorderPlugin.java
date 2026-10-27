@@ -329,6 +329,36 @@ public class EncounterRecorderPlugin extends Plugin
 		opener.start();
 	}
 
+	/**
+	 * Opens Encounter Replay in the browser, on a saved recording if there is one. The page reads the
+	 * recording from the player's own RuneLite folder, so only its file name goes in the link
+	 */
+	void openReplay(String fileName)
+	{
+		String url = replayLink(config.replayUrl(), fileName);
+		if (url == null)
+		{
+			log.warn("The replay address must start with http:// or https://: {}", config.replayUrl());
+			return;
+		}
+		LinkBrowser.browse(url);
+	}
+
+	/** The replay page's address, opening a recording by its file name; null for an address that isn't a web page */
+	static String replayLink(String address, String fileName)
+	{
+		String base = address == null ? "" : address.trim();
+		if (!base.startsWith("http://") && !base.startsWith("https://"))
+		{
+			return null;
+		}
+		if (base.contains("#"))
+		{
+			base = base.substring(0, base.indexOf('#'));
+		}
+		return fileName == null ? base : base + "#session=" + fileName;
+	}
+
 	private void startRecording(String label, boolean automatic, Set<Integer> watched)
 	{
 		recording = new Recording(gson, this::sessionsRoot, label, automatic, watched);

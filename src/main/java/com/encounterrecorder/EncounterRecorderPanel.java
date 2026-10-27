@@ -19,7 +19,10 @@ class EncounterRecorderPanel extends PluginPanel
 	private final JButton startStop = new JButton("Start recording");
 	private final JCheckBox players = new JCheckBox("Players around you");
 	private final JTextArea status = new JTextArea("Not recording");
+	private final JButton replay = new JButton("Open replay");
 	private boolean recording;
+	/** The recording saved last, which Open replay opens */
+	private String lastSaved;
 
 	EncounterRecorderPanel(EncounterRecorderPlugin plugin)
 	{
@@ -53,6 +56,10 @@ class EncounterRecorderPanel extends PluginPanel
 		JButton mark = new JButton("Drop marker");
 		mark.addActionListener(e -> plugin.requestMark(note.getText()));
 		controls.add(mark);
+
+		replay.setToolTipText("Open Encounter Replay in your browser, on the recording saved last");
+		replay.addActionListener(e -> plugin.openReplay(lastSaved));
+		controls.add(replay);
 
 		JButton open = new JButton("Open sessions folder");
 		open.addActionListener(e -> plugin.openSessionsFolder());
@@ -92,6 +99,7 @@ class EncounterRecorderPanel extends PluginPanel
 		recording = false;
 		players.setEnabled(true);
 		startStop.setText("Start recording");
+		lastSaved = fileName;
 		status.setText("Saved " + fileName + "\nin plugin-data/encounter-recorder/sessions");
 	}
 }
