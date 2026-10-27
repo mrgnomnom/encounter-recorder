@@ -57,7 +57,7 @@ Streamers can do the same thing:
 
 ## Getting started
 
-1. **Install** Encounter Recorder from the RuneLite Plugin Hub (coming soon).
+1. **Install** Encounter Recorder from the [RuneLite Plugin Hub](https://runelite.net/plugin-hub/show/encounter-recorder).
 2. **Record.** Name the session in the side panel and press *Start recording*. Or list the boss's NPC
    IDs under *Auto-record NPC IDs*, so recording starts when it appears and stops when it's gone.
    *Drop marker* (or a hotkey) notes moments the game can't know about.
