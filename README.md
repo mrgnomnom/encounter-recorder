@@ -81,6 +81,10 @@ recording someone shared with you.
 
 The file format and the full privacy details are in [docs/FORMAT.md](docs/FORMAT.md).
 
+> **Think before you share.** We deliberately never record your bank PIN, but a recording still holds
+> whatever happened while it ran: what you clicked, what was in your inventory and what you said in local
+> chat. Please don't share recordings of anything sensitive.
+
 ---
 
 Not affiliated with or endorsed by Jagex. RuneScape and Old School RuneScape are trademarks of Jagex Ltd.
