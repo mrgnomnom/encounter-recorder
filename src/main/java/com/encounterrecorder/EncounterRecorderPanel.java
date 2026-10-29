@@ -5,6 +5,7 @@ import java.awt.Color;
 import java.awt.Component;
 import java.awt.Cursor;
 import java.awt.Dimension;
+import java.awt.GridLayout;
 import java.awt.Toolkit;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.MouseAdapter;
@@ -170,9 +171,17 @@ class EncounterRecorderPanel extends PluginPanel
 
 	private JComponent row(Recordings.Entry e)
 	{
-		// The name, then when it was recorded in grey
-		JLabel row = new JLabel("<html>" + escape(e.name) + " <font color='#9a958b'>· "
-			+ escape(e.recordedAt(LocalDate.now().getYear())) + "</font></html>");
+		// The name, and under it in grey when it was recorded and how long it is; each cut short with "…"
+		// rather than wrapping, as each row is sized for its two lines
+		JLabel name = new JLabel(e.name);
+		JLabel details = new JLabel(e.details(LocalDate.now().getYear()));
+		details.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		details.setFont(FontManager.getRunescapeSmallFont());
+		name.setInheritsPopupMenu(true);
+		details.setInheritsPopupMenu(true);
+		JPanel row = new JPanel(new GridLayout(2, 1, 0, 1));
+		row.add(name);
+		row.add(details);
 		row.setOpaque(true);
 		row.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		row.setBorder(BorderFactory.createEmptyBorder(5, 8, 5, 8));

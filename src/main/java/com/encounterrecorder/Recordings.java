@@ -2,6 +2,10 @@ package com.encounterrecorder;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.StandardOpenOption;
 import java.util.Collection;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -9,6 +13,8 @@ import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -25,6 +31,12 @@ final class Recordings
 	/** A repeated name's number: "TFA_1" in the file, shown as "TFA-1" (labels never hold "_") */
 	private static final Pattern COUNTED = Pattern.compile("^(.*)_(\\d+)$");
 	private static final Pattern HEADER = Pattern.compile("\"e\"\\s*:\\s*\"header\"");
+	private static final Pattern TICK = Pattern.compile("^\\{\"t\":(\\d+),");
+	private static final Pattern END_TICKS = Pattern.compile("\"e\":\"end\".*\"ticks\":(\\d+)");
+	/** How much of a file's end is read for its last line */
+	private static final int TAIL_BYTES = 8192;
+	/** Each recording's length in ticks, by name, size and time, so a file is only read again once it changes */
+	private static final Map<String, Integer> TICKS = new ConcurrentHashMap<>();
 	private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 	private static final DateTimeFormatter SHOWN = DateTimeFormatter.ofPattern("d MMM yyyy, HH:mm");
 	/** In the list, the year only when it isn't this one */
@@ -37,13 +49,22 @@ final class Recordings
 		/** When it was recorded, from its file name, or when the file last changed */
 		final LocalDateTime when;
 		final long bytes;
+		/** How many ticks it spans, or -1 if its end couldn't be read */
+		final int ticks;
 
-		Entry(String fileName, String name, LocalDateTime when, long bytes)
+		Entry(String fileName, String name, LocalDateTime when, long bytes, int ticks)
 		{
 			this.fileName = fileName;
 			this.name = name;
 			this.when = when;
 			this.bytes = bytes;
+			this.ticks = ticks;
+		}
+
+		/** The line under its name: "28 Oct, 15:25 · 2,598 ticks" */
+		String details(int thisYear)
+		{
+			return recordedAt(thisYear) + (ticks >= 0 ? String.format(" · %,d ticks", ticks) : "");
 		}
 
 		/** When it was recorded, short enough to sit beside its name: "28 Oct, 15:25" */
@@ -67,7 +88,16 @@ final class Recordings
 		List<Entry> out = new ArrayList<>();
 		for (Filepath f : files(dir))
 		{
-			out.add(entry(f.getFileName(), f.getLastModifiedTime().toMillis(), f.size()));
+			long modified = f.getLastModifiedTime().toMillis();
+			long bytes = f.size();
+			String key = f.getFileName() + ":" + bytes + ":" + modified;
+			Integer ticks = TICKS.get(key);
+			if (ticks == null)
+			{
+				ticks = ticksFromTail(tail(f, bytes));
+				TICKS.put(key, ticks);
+			}
+			out.add(entry(f.getFileName(), modified, bytes, ticks));
 		}
 		out.sort(Comparator.comparing((Entry e) -> e.when).reversed().thenComparing(e -> e.fileName));
 		return out;
@@ -91,7 +121,60 @@ final class Recordings
 		}
 	}
 
+	/** The last few KB of a file, enough for its last line */
+	private static String tail(Filepath f, long bytes)
+	{
+		long from = Math.max(0, bytes - TAIL_BYTES);
+		ByteBuffer buffer = ByteBuffer.allocate((int) (bytes - from));
+		try (FileChannel channel = f.openFileChannel(StandardOpenOption.READ))
+		{
+			while (buffer.hasRemaining() && channel.read(buffer, from + buffer.position()) > 0)
+			{
+				// Keep reading until the tail is in
+			}
+		}
+		catch (IOException e)
+		{
+			return "";
+		}
+		return new String(buffer.array(), 0, buffer.position(), StandardCharsets.UTF_8);
+	}
+
+	/**
+	 * How many ticks a recording spans, from the end of its file: a stopped one ends with its count; one
+	 * still being written, or cut off, by its last whole line's tick, counted from 0. -1 if there's none
+	 */
+	static int ticksFromTail(String tail)
+	{
+		String[] lines = tail.split("\n");
+		for (int i = lines.length - 1; i >= 0; i--)
+		{
+			String line = lines[i].trim();
+			// The first line of the tail may be cut off at the front, and the last at the back
+			if (!line.startsWith("{") || !line.endsWith("}"))
+			{
+				continue;
+			}
+			Matcher end = END_TICKS.matcher(line);
+			if (end.find())
+			{
+				return Integer.parseInt(end.group(1));
+			}
+			Matcher tick = TICK.matcher(line);
+			if (tick.find())
+			{
+				return Integer.parseInt(tick.group(1)) + 1;
+			}
+		}
+		return -1;
+	}
+
 	static Entry entry(String fileName, long modifiedMs, long bytes)
+	{
+		return entry(fileName, modifiedMs, bytes, -1);
+	}
+
+	static Entry entry(String fileName, long modifiedMs, long bytes, int ticks)
 	{
 		Matcher m = FILE.matcher(fileName);
 		LocalDateTime when = null;
@@ -113,7 +196,7 @@ final class Recordings
 		{
 			when = LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(modifiedMs), java.time.ZoneId.systemDefault());
 		}
-		return new Entry(fileName, name, when, bytes);
+		return new Entry(fileName, name, when, bytes, ticks);
 	}
 
 	private static String shownName(String label)

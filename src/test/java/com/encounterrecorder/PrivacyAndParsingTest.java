@@ -32,6 +32,17 @@ public class PrivacyAndParsingTest
 	}
 
 	@Test
+	public void recordingLengthsComeFromTheEndOfTheFile()
+	{
+		// Stopped: the end line has the count, and its own tick is that count, not one more
+		assertEquals(2598, Recordings.ticksFromTail("pose\":808}]}\n{\"t\":2598,\"c\":470542,\"e\":\"end\",\"reason\":\"stopped by hand\",\"ticks\":2598,\"endedMs\":1}\n"));
+		// Still being written: the last whole line's tick, counted from 0, past a half-written one
+		assertEquals(41, Recordings.ticksFromTail("{\"t\":40,\"c\":9,\"e\":\"tick\"}\n{\"t\":41,\"c\":10,\"e\":\"cl"));
+		assertEquals(-1, Recordings.ticksFromTail(""));
+		assertEquals("26 Oct, 23:21 · 2,598 ticks", Recordings.entry("20261026-232157-Demo.jsonl", 0, 1, 2598).details(2026));
+	}
+
+	@Test
 	public void unnamedRecordingsAreNamedAfterThePlace()
 	{
 		assertEquals("Edgeville", Areas.name(12342, false));
