@@ -92,7 +92,8 @@ class Recording
 	 */
 	static String safeLabel(String label)
 	{
-		String cleaned = label == null ? "" : label.trim().replaceAll("[^A-Za-z0-9-]+", "-").replaceAll("-{2,}", "-").replaceAll("^-|-$", "");
+		// Apostrophes go without a gap: "K'ril" is "Kril", not "K ril"
+		String cleaned = label == null ? "" : label.trim().replace("'", "").replaceAll("[^A-Za-z0-9-]+", "-").replaceAll("-{2,}", "-").replaceAll("^-|-$", "");
 		if (cleaned.isEmpty())
 		{
 			return "session";

@@ -27,6 +27,8 @@ final class Recordings
 	private static final Pattern HEADER = Pattern.compile("\"e\"\\s*:\\s*\"header\"");
 	private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 	private static final DateTimeFormatter SHOWN = DateTimeFormatter.ofPattern("d MMM yyyy, HH:mm");
+	/** In the list, the year only when it isn't this one */
+	private static final DateTimeFormatter SHORT = DateTimeFormatter.ofPattern("d MMM, HH:mm");
 
 	static final class Entry
 	{
@@ -42,6 +44,12 @@ final class Recordings
 			this.name = name;
 			this.when = when;
 			this.bytes = bytes;
+		}
+
+		/** When it was recorded, short enough to sit beside its name: "28 Oct, 15:25" */
+		String recordedAt(int thisYear)
+		{
+			return (when.getYear() == thisYear ? SHORT : SHOWN).format(when);
 		}
 
 		String describe()

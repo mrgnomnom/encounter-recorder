@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
+import java.util.function.Consumer;
 import javax.inject.Inject;
 import javax.swing.SwingUtilities;
 import lombok.Getter;
@@ -44,9 +45,11 @@ import net.runelite.api.Tile;
 import net.runelite.api.TileObject;
 import net.runelite.api.WorldView;
 import net.runelite.api.coords.LocalPoint;
+import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.ActorDeath;
 import net.runelite.api.events.AnimationChanged;
 import net.runelite.api.events.AreaSoundEffectPlayed;
+import net.runelite.api.events.ClientTick;
 import net.runelite.api.events.ChatMessage;
 import net.runelite.api.events.DecorativeObjectDespawned;
 import net.runelite.api.events.DecorativeObjectSpawned;
@@ -120,7 +123,7 @@ import net.runelite.client.util.Text;
 )
 public class EncounterRecorderPlugin extends Plugin
 {
-	static final int FORMAT_VERSION = 5;
+	static final int FORMAT_VERSION = 6;
 
 	@Inject
 	private Client client;
@@ -138,6 +141,11 @@ public class EncounterRecorderPlugin extends Plugin
 	 * pointing the plugin at a lookalike page that would ask for their RuneLite folders
 	 */
 	static final String REPLAY_URL = "https://encounter-replay.pages.dev/";
+	/** How many frames (20 ms each) a Walk here waits for the client to set where it's walking you */
+	private static final int WALK_WAIT_CYCLES = 5;
+	/** The stop reason when a recording reaches the length limit */
+	private static final String LIMIT_REACHED = "reached the length limit";
+
 	@Inject
 	private ClientToolbar clientToolbar;
 	@Inject
@@ -196,6 +204,20 @@ public class EncounterRecorderPlugin extends Plugin
 	private boolean bankPinOpen;
 	private final Set<Projectile> seenProjectiles = Collections.newSetFromMap(new WeakHashMap<>());
 	private boolean sceneDirty;
+	/** The client cycle of a Walk here waiting for the tile the client works out for it, or -1 */
+	private int walkClickCycle = -1;
+	private int walkWaited;
+	private LocalPoint lastDestination;
+
+	private final HotkeyListener recordHotkey = new HotkeyListener(() -> config.recordHotkey())
+	{
+		@Override
+		public void hotkeyPressed()
+		{
+			String label = panel.label();
+			clientThread.invoke(() -> toggleRecording(label));
+		}
+	};
 
 	private final HotkeyListener markHotkey = new HotkeyListener(() -> config.markHotkey())
 	{
@@ -240,6 +262,7 @@ public class EncounterRecorderPlugin extends Plugin
 			.build();
 		clientToolbar.addNavigation(navButton);
 		overlayManager.add(overlay);
+		keyManager.registerKeyListener(recordHotkey);
 		keyManager.registerKeyListener(markHotkey);
 		mouseManager.registerMouseListener(pressListener);
 	}
@@ -251,6 +274,7 @@ public class EncounterRecorderPlugin extends Plugin
 		{
 			stopRecording("plugin turned off");
 		}
+		keyManager.unregisterKeyListener(recordHotkey);
 		keyManager.unregisterKeyListener(markHotkey);
 		mouseManager.unregisterMouseListener(pressListener);
 		overlayManager.remove(overlay);
@@ -366,6 +390,37 @@ public class EncounterRecorderPlugin extends Plugin
 		}, "Couldn't rename " + fileName);
 	}
 
+	/**
+	 * The recordings folder's location, for pasting into a file manager: plugins may not open folders
+	 * themselves. Found off the game's threads, since it makes the folder if it isn't there yet
+	 */
+	void findSessionsFolder(Consumer<String> found)
+	{
+		Thread finder = new Thread(() ->
+		{
+			try
+			{
+				Filepath dir = sessionsDir();
+				dir.createDirectories();
+				String path = dir.toString();
+				SwingUtilities.invokeLater(() -> found.accept(path));
+			}
+			catch (IOException e)
+			{
+				log.warn("Could not find the recordings folder", e);
+				SwingUtilities.invokeLater(() ->
+				{
+					if (panel != null)
+					{
+						panel.showProblem("Couldn't find the recordings folder: " + e.getMessage());
+					}
+				});
+			}
+		}, "encounter-recorder-folder");
+		finder.setDaemon(true);
+		finder.start();
+	}
+
 	/** Copies a recording from anywhere into the sessions folder, leaving the original where it was */
 	void importRecording(Filepath from)
 	{
@@ -463,6 +518,10 @@ public class EncounterRecorderPlugin extends Plugin
 
 	private void startRecording(String label, boolean automatic, Set<Integer> watched)
 	{
+		if (label == null || label.trim().isEmpty())
+		{
+			label = unnamedLabel();
+		}
 		recording = new Recording(gson, this::sessionsRoot, label, automatic, watched);
 		lastLayout = null;
 		lastWidgets.clear();
@@ -474,6 +533,8 @@ public class EncounterRecorderPlugin extends Plugin
 		players = config.recordOtherPlayers();
 		names = !config.hidePlayerNames();
 		seenProjectiles.clear();
+		walkClickCycle = -1;
+		lastDestination = null;
 
 		JsonObject header = emit("header");
 		header.addProperty("format", FORMAT_VERSION);
@@ -544,6 +605,9 @@ public class EncounterRecorderPlugin extends Plugin
 		end.addProperty("ticks", recording.getTicks());
 		end.addProperty("endedMs", System.currentTimeMillis());
 		String name = recording.getFileName();
+		String why = reason.equals(LIMIT_REACHED)
+			? String.format("Stopped at the %,d-tick length limit (see settings)", recording.getTicks())
+			: null;
 		recording.close();
 		recording = null;
 		log.debug("Recording {} stopped: {}", name, reason);
@@ -553,11 +617,120 @@ public class EncounterRecorderPlugin extends Plugin
 			{
 				if (panel != null)
 				{
-					panel.showStopped(name);
+					panel.showStopped(name, why);
 					refreshReplays();
 				}
 			});
 		}
+	}
+
+	/** The start recording hotkey: starts a recording, or stops the one running, as the panel's button does */
+	private void toggleRecording(String label)
+	{
+		// Like a marker, a start or stop during PIN entry would time the keypresses
+		if (bankPinShowing())
+		{
+			return;
+		}
+		if (recording == null)
+		{
+			startRecording(label, false, Collections.emptySet());
+		}
+		else
+		{
+			stopRecording("stopped by hand");
+		}
+	}
+
+	/**
+	 * Where the client is walking you, each time it changes: the tile it puts the red flag on and sends to
+	 * the server. For a Walk here, this is the clicked tile for certain: the client works it out from the
+	 * click while drawing the next frame and sets it the frame after, so it's watched for a few frames. If
+	 * it doesn't change, the click was on the tile you were already walking to. Minimap clicks show up here
+	 * too, with no click to go with them
+	 */
+	@Subscribe
+	public void onClientTick(ClientTick event)
+	{
+		if (recording == null)
+		{
+			return;
+		}
+		LocalPoint destination = client.getLocalDestinationLocation();
+		boolean changed = destination != null && !destination.equals(lastDestination);
+		lastDestination = destination;
+		int click = -1;
+		if (walkClickCycle >= 0)
+		{
+			if (!changed && ++walkWaited < WALK_WAIT_CYCLES)
+			{
+				return;
+			}
+			click = walkClickCycle;
+			walkClickCycle = -1;
+		}
+		else if (!changed)
+		{
+			return;
+		}
+		// Like a click, a destination set during PIN entry would time the keypresses
+		if (destination == null || bankPinShowing())
+		{
+			return;
+		}
+		JsonObject line = emit("dest");
+		Snap.tile(line, client.getTopLevelWorldView(), destination);
+		line.remove("lx");
+		line.remove("ly");
+		if (click >= 0)
+		{
+			line.addProperty("click", click);
+		}
+	}
+
+	/**
+	 * A name for a recording started without one: the place you're in, or else the highest-level NPC
+	 * around (usually the boss), or else the nearest NPC. Empty if there's none of those, which names it
+	 * "session"
+	 */
+	private String unnamedLabel()
+	{
+		Player me = client.getLocalPlayer();
+		WorldView wv = client.getTopLevelWorldView();
+		if (me == null || wv == null)
+		{
+			return "";
+		}
+		// In an instance, the map square it was copied from
+		WorldPoint where = WorldPoint.fromLocalInstance(client, me.getLocalLocation());
+		String place = where == null ? null : Areas.name(where.getRegionID(), wv.isInstance());
+		if (place != null)
+		{
+			return place;
+		}
+		NPC strongest = null;
+		NPC nearest = null;
+		int nearestDistance = Integer.MAX_VALUE;
+		for (NPC npc : wv.npcs())
+		{
+			String name = npc.getName();
+			if (name == null || name.equals("null"))
+			{
+				continue;
+			}
+			if (npc.getCombatLevel() > 0 && (strongest == null || npc.getCombatLevel() > strongest.getCombatLevel()))
+			{
+				strongest = npc;
+			}
+			int distance = npc.getWorldLocation().distanceTo(me.getWorldLocation());
+			if (distance < nearestDistance)
+			{
+				nearest = npc;
+				nearestDistance = distance;
+			}
+		}
+		NPC named = strongest != null ? strongest : nearest;
+		return named == null ? "" : Text.removeTags(named.getName());
 	}
 
 	private void mark(String note)
@@ -655,6 +828,12 @@ public class EncounterRecorderPlugin extends Plugin
 				stopRecording("watched NPCs gone");
 				return;
 			}
+		}
+		int limit = config.maxTicks();
+		if (limit > 0 && recording.getTicks() >= limit)
+		{
+			stopRecording(LIMIT_REACHED);
+			return;
 		}
 		refreshPanel();
 	}
@@ -1599,6 +1778,9 @@ public class EncounterRecorderPlugin extends Plugin
 		// the scene tile under the mouse
 		if (event.getMenuAction() == MenuAction.WALK)
 		{
+			// Only a guess (see onClientTick): the tile under the mouse when the frame before was drawn
+			walkClickCycle = client.getGameCycle();
+			walkWaited = 0;
 			WorldView wv = client.getTopLevelWorldView();
 			Tile tile = wv.getSelectedSceneTile();
 			if (tile != null)

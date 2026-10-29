@@ -1,6 +1,7 @@
 package com.encounterrecorder;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import java.util.Set;
@@ -31,12 +32,26 @@ public class PrivacyAndParsingTest
 	}
 
 	@Test
+	public void unnamedRecordingsAreNamedAfterThePlace()
+	{
+		assertEquals("Edgeville", Areas.name(12342, false));
+		// Scurrius's room is copied from the Varrock Sewers' map square
+		assertEquals("Scurrius", Areas.name(13210, true));
+		assertEquals("Varrock Sewers", Areas.name(13210, false));
+		assertEquals("The Fractured Archive", Areas.name(16471, true));
+		assertNull(Areas.name(1, false));
+		assertEquals("Kril-Tsutsaroth", Recording.safeLabel("K'ril Tsutsaroth"));
+	}
+
+	@Test
 	public void recordingsAreListedByTheirNameNewestFirst()
 	{
 		assertEquals("Demo", Recordings.entry("20261026-232157-Demo.jsonl", 0, 1).name);
 		assertEquals("vardorvis p2", Recordings.entry("20261025-101500-vardorvis-p2.jsonl", 0, 1).name);
 		assertEquals("my-own-file", Recordings.entry("my-own-file.jsonl", 0, 1).name);
 		assertEquals(2026, Recordings.entry("20261026-232157-Demo.jsonl", 0, 1).when.getYear());
+		assertEquals("26 Oct, 23:21", Recordings.entry("20261026-232157-Demo.jsonl", 0, 1).recordedAt(2026));
+		assertEquals("26 Oct 2026, 23:21", Recordings.entry("20261026-232157-Demo.jsonl", 0, 1).recordedAt(2027));
 	}
 
 	@Test

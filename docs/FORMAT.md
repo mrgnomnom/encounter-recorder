@@ -24,7 +24,10 @@ happened on and the gaps between repeats. A gap that keeps repeating is an attac
 `tools/replay.html` is the old top-down viewer, kept for quick checks: drop a session onto it.
 
 Files are named `yyyyMMdd-HHmmss-label.jsonl`. A label already in the folder gets a number, stored as
-`label_1`, `label_2` and shown as "label-1", "label-2".
+`label_1`, `label_2` and shown as "label-1", "label-2". A recording started without a name is named
+after the place you're in ("Edgeville", "The Fractured Archive"), or else the highest-level NPC around,
+or else the nearest NPC, or else "session". Place names come from RuneLite's Discord plugin's list, by
+map square, with instances named after the map they were copied from.
 
 ## File format
 
@@ -62,7 +65,8 @@ sub-tile position (128 units per tile). Actors are referred to as `{"k":"me"}`,
 | `sound` / `area_sound` | A sound plays | `id`, `delay`, `from`, and for area sounds `range` and position |
 | `var` | A varbit or varp changes | `varp`, `varbit`, `value` |
 | `chat` / `say` | Game messages and local chat; overhead text | `type`, `text`, and for local chat `who` (the speaker by index). Private, friends, clan and group chat are never recorded. |
-| `click` | You click a menu option | `option`, `target` (player names replaced), `action`, `id`, `p0`, `p1`, `item`, `widget` as `[interface, component]` for interface clicks (`p0` is then the slot), `mx`/`my` canvas position, `tile` the clicked scene tile for walk clicks (whose `p0`/`p1` are just the mouse position), `wb` the clicked button's rectangle and `consumed` whether another plugin cancelled it (format 4) |
+| `click` | You click a menu option | `option`, `target` (player names replaced), `action`, `id`, `p0`, `p1`, `item`, `widget` as `[interface, component]` for interface clicks (`p0` is then the slot), `mx`/`my` canvas position, `tile` for walk clicks (whose `p0`/`p1` are just the mouse position) the scene tile under the mouse, a guess that can be a tile off: the `dest` line after it has the tile for certain (format 6), `wb` the clicked button's rectangle and `consumed` whether another plugin cancelled it (format 4) |
+| `dest` | Where the client is walking you changes, or is settled after a Walk here (format 6) | position of the tile the client flags and sends to the server, and `click` the cycle of the Walk here it's for. Without `click`, it came from somewhere else, like the minimap |
 | `ui_tab` | The side panel tab changes, by click or hotkey | `tab` |
 | `ui_widgets` | What the combat options (593) or spellbook (218) show changes (format 5) | `group`, `w`/`h`, `widgets` as `[x, y, w, h, type, sprite, text, colour, opacity, item, quantity, font, xAlign, yAlign, shadow, tiled]` |
 | `press` | Any mouse press on the game, including ones that hit nothing (format 4) | `mx`/`my` canvas position, `button` |

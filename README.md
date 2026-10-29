@@ -58,9 +58,10 @@ Streamers can do the same thing:
 ## Getting started
 
 1. **Install** Encounter Recorder from the [RuneLite Plugin Hub](https://runelite.net/plugin-hub/show/encounter-recorder).
-2. **Record.** Name the session in the side panel and press *Start recording*. Or list the boss's NPC
+2. **Record.** Name the session in the side panel and press *Start recording* (or its hotkey). Or list the boss's NPC
    IDs under *Auto-record NPC IDs*, so recording starts when it appears and stops when it's gone.
-   *Drop marker* (or a hotkey) notes moments the game can't know about.
+   *Drop marker* (or a hotkey) notes moments the game can't know about. A recording stops by itself at
+   5,000 ticks (50 minutes); *Length limit* in the settings changes that.
 3. **Watch.** Click any recording in the panel's Replays list and it opens in Encounter Replay. The
    first visit walks you through a one-time game cache setup and a short tutorial. It needs a Chromium
    browser (Chrome, Edge, Brave or Opera).
@@ -73,7 +74,9 @@ Streamers can do the same thing:
 </table>
 
 Right-click a replay to rename or delete it. **Import…** brings in a recording someone shared with
-you. Recordings are saved in `.runelite/plugin-data/encounter-recorder/sessions`.
+you. Recordings are saved in `.runelite/plugin-data/encounter-recorder/sessions`, and **Copy folder
+path** puts that location on your clipboard, ready to paste into File Explorer. A recording you don't name
+is named after where you are, like "Edgeville", or the boss you're fighting.
 
 ## What it never records
 
@@ -88,6 +91,11 @@ The file format and the full privacy details are in [docs/FORMAT.md](docs/FORMAT
 > **Think before you share.** We deliberately never record your bank PIN, but a recording still holds
 > whatever happened while it ran: what you clicked, what was in your inventory and what you said in local
 > chat. Please don't share recordings of anything sensitive.
+
+## Credits
+
+The place names unnamed recordings get come from RuneLite's Discord plugin (BSD 2-Clause, its copyright
+kept in `Areas.java`).
 
 ---
 

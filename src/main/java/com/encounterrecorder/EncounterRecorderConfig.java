@@ -60,12 +60,39 @@ public interface EncounterRecorderConfig extends Config
 		return 50;
 	}
 
+	@Range(max = 100000)
+	@Units(Units.TICKS)
 	@ConfigItem(
-		keyName = "markHotkey",
-		name = "Mark hotkey",
-		description = "Drops a marker into the recording, with the note typed in the side panel",
+		keyName = "maxTicks",
+		name = "Length limit",
+		description = "Stop a recording once it's this many ticks long: 5,000 is 50 minutes. A busy raid fills about "
+			+ "12 MB per 1,000 ticks, solo bossing far less. 0 for no limit.",
 		section = whenSection,
 		position = 3
+	)
+	default int maxTicks()
+	{
+		return 5000;
+	}
+
+	@ConfigItem(
+		keyName = "recordHotkey",
+		name = "Start recording hotkey",
+		description = "Starts a recording, named from the side panel's Session name; pressed again, stops it",
+		section = whenSection,
+		position = 4
+	)
+	default Keybind recordHotkey()
+	{
+		return Keybind.NOT_SET;
+	}
+
+	@ConfigItem(
+		keyName = "markHotkey",
+		name = "Drop marker hotkey",
+		description = "Drops a marker into the recording, with the note typed in the side panel",
+		section = whenSection,
+		position = 5
 	)
 	default Keybind markHotkey()
 	{

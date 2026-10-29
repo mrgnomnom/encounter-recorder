@@ -5,8 +5,11 @@ import java.awt.Color;
 import java.awt.Component;
 import java.awt.Cursor;
 import java.awt.Dimension;
+import java.awt.Toolkit;
+import java.awt.datatransfer.StringSelection;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.time.LocalDate;
 import java.util.List;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
@@ -21,6 +24,7 @@ import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
+import javax.swing.Timer;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.FontManager;
 import net.runelite.client.ui.PluginPanel;
@@ -32,6 +36,7 @@ import net.runelite.client.util.Filepath;
  */
 class EncounterRecorderPanel extends PluginPanel
 {
+	private static final String COPY_FOLDER = "Copy folder path";
 	private final EncounterRecorderPlugin plugin;
 	private final JTextField label = new JTextField();
 	private final JTextField note = new JTextField();
@@ -55,6 +60,12 @@ class EncounterRecorderPanel extends PluginPanel
 
 		// ---------- Record ----------
 		content.add(section("Record", null));
+		JLabel hotkeys = new JLabel("Recording / Marker hotkeys in Encounter Recorder settings");
+		hotkeys.setFont(FontManager.getRunescapeSmallFont());
+		hotkeys.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		hotkeys.setBorder(BorderFactory.createEmptyBorder(0, 0, 4, 0));
+		hotkeys.setAlignmentX(Component.LEFT_ALIGNMENT);
+		content.add(hotkeys);
 		content.add(caption("Session name"));
 		label.setToolTipText("Goes into the file name, e.g. vardorvis-p2");
 		content.add(fill(label));
@@ -109,6 +120,18 @@ class EncounterRecorderPanel extends PluginPanel
 		importButton.setToolTipText("Copy a recording from anywhere (one a friend sent, or one exported from the website) into your recordings");
 		importButton.addActionListener(e -> chooseImport());
 		content.add(fill(importButton));
+		content.add(gap(4));
+		JButton copyFolder = new JButton(COPY_FOLDER);
+		copyFolder.setToolTipText("Copy where your recordings are saved, to paste into File Explorer's address bar");
+		copyFolder.addActionListener(e -> plugin.findSessionsFolder(path ->
+		{
+			Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(path), null);
+			copyFolder.setText("Copied ✓");
+			Timer back = new Timer(2000, a -> copyFolder.setText(COPY_FOLDER));
+			back.setRepeats(false);
+			back.start();
+		}));
+		content.add(fill(copyFolder));
 		content.add(gap(6));
 		replayList.setLayout(new BoxLayout(replayList, BoxLayout.Y_AXIS));
 		content.add(replayList);
@@ -147,7 +170,9 @@ class EncounterRecorderPanel extends PluginPanel
 
 	private JComponent row(Recordings.Entry e)
 	{
-		JLabel row = new JLabel(e.name);
+		// The name, then when it was recorded in grey
+		JLabel row = new JLabel("<html>" + escape(e.name) + " <font color='#9a958b'>· "
+			+ escape(e.recordedAt(LocalDate.now().getYear())) + "</font></html>");
 		row.setOpaque(true);
 		row.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		row.setBorder(BorderFactory.createEmptyBorder(5, 8, 5, 8));
@@ -251,6 +276,11 @@ class EncounterRecorderPanel extends PluginPanel
 		players.setSelected(on);
 	}
 
+	String label()
+	{
+		return label.getText();
+	}
+
 	String note()
 	{
 		return note.getText();
@@ -265,12 +295,13 @@ class EncounterRecorderPanel extends PluginPanel
 		status.setText("Recording\n" + text);
 	}
 
-	void showStopped(String fileName)
+	/** `why`: a reason worth saying, like the length limit; otherwise where to find it */
+	void showStopped(String fileName, String why)
 	{
 		recording = false;
 		players.setEnabled(true);
 		startStop.setText("Start recording");
-		status.setText("Saved " + Recordings.entry(fileName, 0, 0).name + "\nIt's at the top of Replays below");
+		status.setText("Saved " + Recordings.entry(fileName, 0, 0).name + "\n" + (why != null ? why : "It's at the top of Replays below"));
 	}
 
 	private static JComponent section(String title, JComponent right)
