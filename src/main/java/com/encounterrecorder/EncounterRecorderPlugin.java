@@ -17,6 +17,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Future;
 import java.util.function.Consumer;
 import javax.inject.Inject;
 import javax.swing.SwingUtilities;
@@ -93,6 +96,7 @@ import net.runelite.api.widgets.WidgetUtil;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.events.ClientShutdown;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.input.KeyManager;
 import net.runelite.client.input.MouseAdapter;
@@ -194,6 +198,8 @@ public class EncounterRecorderPlugin extends Plugin
 
 	@Getter
 	private Recording recording;
+	/** Recordings that have stopped but are still being packed: closing the client waits for them */
+	private final Set<Recording> finishing = ConcurrentHashMap.newKeySet();
 	private Set<Integer> autoIds = Collections.emptySet();
 	private final Set<Integer> definedNpcs = new HashSet<>();
 	private final Set<Integer> definedObjects = new HashSet<>();
@@ -253,7 +259,12 @@ public class EncounterRecorderPlugin extends Plugin
 		autoIds = parseIds(config.autoRecordNpcIds());
 		panel = new EncounterRecorderPanel(this);
 		panel.showRecordPlayers(config.recordOtherPlayers());
-		refreshReplays();
+		// Packs any recording the client closed, crashed or was killed in the middle of; then lists them all
+		inBackground(() ->
+		{
+			Compressed.finishLeftovers(sessionsDir(), System.currentTimeMillis());
+			return null;
+		}, "Couldn't tidy up the recordings folder");
 		navButton = NavigationButton.builder()
 			.tooltip("Encounter Recorder")
 			.icon(icon())
@@ -280,6 +291,35 @@ public class EncounterRecorderPlugin extends Plugin
 		overlayManager.remove(overlay);
 		clientToolbar.removeNavigation(navButton);
 		panel = null;
+	}
+
+	/**
+	 * Closing the window doesn't log out first, so a recording still running is stopped here. The client
+	 * waits (up to 10 seconds, shared with other plugins) for it and any still packing to finish; if it
+	 * can't, the plain file is left whole and packed the next time the plugin starts
+	 */
+	@Subscribe
+	public void onClientShutdown(ClientShutdown event)
+	{
+		CompletableFuture<Void> stopped = new CompletableFuture<>();
+		clientThread.invoke(() ->
+		{
+			if (recording != null)
+			{
+				stopRecording("client closed");
+			}
+			// Queued before stopped completes, so the client waits for these too
+			for (Recording r : finishing)
+			{
+				Future<?> packed = r.getFinished();
+				if (packed != null)
+				{
+					event.waitFor(packed);
+				}
+			}
+			stopped.complete(null);
+		});
+		event.waitFor(stopped);
 	}
 
 	@Subscribe
@@ -360,11 +400,12 @@ public class EncounterRecorderPlugin extends Plugin
 		return sessionsRoot().joinSegment("sessions");
 	}
 
-	/** Whether a recording is the one being written now, which can't be renamed or deleted */
+	/** Whether a recording is the one being written or packed now, which can't be renamed or deleted */
 	boolean isRecordingNow(String fileName)
 	{
 		Recording r = recording;
-		return r != null && r.getFileName().equals(fileName);
+		return r != null && r.getFileName().equals(fileName)
+			|| finishing.stream().anyMatch(f -> f.getFileName().equals(fileName));
 	}
 
 	void deleteRecording(String fileName)
@@ -608,7 +649,13 @@ public class EncounterRecorderPlugin extends Plugin
 		String why = reason.equals(LIMIT_REACHED)
 			? String.format("Stopped at the %,d-tick length limit (see settings)", recording.getTicks())
 			: null;
-		recording.close();
+		Recording stopped = recording;
+		finishing.add(stopped);
+		stopped.close(() ->
+		{
+			finishing.remove(stopped);
+			refreshReplays();
+		});
 		recording = null;
 		log.debug("Recording {} stopped: {}", name, reason);
 		if (panel != null)

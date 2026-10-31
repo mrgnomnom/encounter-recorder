@@ -267,7 +267,7 @@ class EncounterRecorderPanel extends PluginPanel
 			.setIsOpen()
 			.setAcceptsFiles()
 			.setDialogTitle("Import a recording")
-			.addExtensionFilter("Encounter Recorder recordings (*.jsonl)", "jsonl")
+			.addExtensionFilter("Encounter Recorder recordings (*.jsonl, *.jsonl.gz)", "jsonl", "gz")
 			.showDialog(this);
 		if (chosen != null && !chosen.isEmpty())
 		{

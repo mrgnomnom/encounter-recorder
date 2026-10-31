@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -23,18 +24,20 @@ import net.runelite.client.util.Filepath;
 
 /**
  * The recordings in the sessions folder, for the panel's list: newest first, each shown by the name it was
- * given, without the time stamp in front or the .jsonl after it.
+ * given, without the time stamp in front or the .jsonl (or .jsonl.gz, once packed) after it.
  */
 final class Recordings
 {
-	private static final Pattern FILE = Pattern.compile("^(\\d{8}-\\d{6})-(.*)\\.jsonl$");
+	private static final Pattern FILE = Pattern.compile("^(\\d{8}-\\d{6})-(.*)\\.jsonl(?:\\.gz)?$");
+	/** A recording's ending: plain, or packed when it stopped */
+	private static final Pattern EXTENSION = Pattern.compile("(?i)\\.jsonl(?:\\.gz)?$|\\.gz$");
 	/** A repeated name's number: "TFA_1" in the file, shown as "TFA-1" (labels never hold "_") */
 	private static final Pattern COUNTED = Pattern.compile("^(.*)_(\\d+)$");
 	private static final Pattern HEADER = Pattern.compile("\"e\"\\s*:\\s*\"header\"");
 	private static final Pattern TICK = Pattern.compile("^\\{\"t\":(\\d+),");
 	private static final Pattern END_TICKS = Pattern.compile("\"e\":\"end\".*\"ticks\":(\\d+)");
 	/** How much of a file's end is read for its last line */
-	private static final int TAIL_BYTES = 8192;
+	static final int TAIL_BYTES = 8192;
 	/** Each recording's length in ticks, by name, size and time, so a file is only read again once it changes */
 	private static final Map<String, Integer> TICKS = new ConcurrentHashMap<>();
 	private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
@@ -94,7 +97,7 @@ final class Recordings
 			Integer ticks = TICKS.get(key);
 			if (ticks == null)
 			{
-				ticks = ticksFromTail(tail(f, bytes));
+				ticks = isPacked(f.getFileName()) ? Compressed.ticksOf(f) : ticksFromTail(tail(f, bytes));
 				TICKS.put(key, ticks);
 			}
 			out.add(entry(f.getFileName(), modified, bytes, ticks));
@@ -117,12 +120,32 @@ final class Recordings
 		}
 		try (Stream<Filepath> walk = dir.walk(1))
 		{
-			return walk.filter(f -> f.getFileName().endsWith(".jsonl") && f.isFile()).collect(Collectors.toList());
+			List<Filepath> found = walk.filter(f -> isRecordingName(f.getFileName()) && f.isFile()).collect(Collectors.toList());
+			// A plain recording whose packed copy is there too is on its way out: list it once
+			Set<String> names = found.stream().map(Filepath::getFileName).collect(Collectors.toSet());
+			found.removeIf(f -> names.contains(f.getFileName() + Compressed.EXT));
+			return found;
 		}
 	}
 
+	static boolean isRecordingName(String fileName)
+	{
+		return fileName.endsWith(".jsonl") || fileName.endsWith(".jsonl" + Compressed.EXT);
+	}
+
+	static boolean isPacked(String fileName)
+	{
+		return fileName.endsWith(Compressed.EXT);
+	}
+
+	/** How a recording's file name ends: .jsonl.gz once packed, .jsonl before */
+	private static String extension(String fileName)
+	{
+		return isPacked(fileName.toLowerCase()) ? ".jsonl" + Compressed.EXT : ".jsonl";
+	}
+
 	/** The last few KB of a file, enough for its last line */
-	private static String tail(Filepath f, long bytes)
+	static String tail(Filepath f, long bytes)
 	{
 		long from = Math.max(0, bytes - TAIL_BYTES);
 		ByteBuffer buffer = ByteBuffer.allocate((int) (bytes - from));
@@ -146,27 +169,40 @@ final class Recordings
 	 */
 	static int ticksFromTail(String tail)
 	{
+		String line = lastWholeLine(tail);
+		if (line == null)
+		{
+			return -1;
+		}
+		Matcher end = END_TICKS.matcher(line);
+		if (end.find())
+		{
+			return Integer.parseInt(end.group(1));
+		}
+		Matcher tick = TICK.matcher(line);
+		return tick.find() ? Integer.parseInt(tick.group(1)) + 1 : -1;
+	}
+
+	/** Whether a recording ended properly, with its end line, rather than being cut off */
+	static boolean isFinished(String tail)
+	{
+		String line = lastWholeLine(tail);
+		return line != null && END_TICKS.matcher(line).find();
+	}
+
+	private static String lastWholeLine(String tail)
+	{
 		String[] lines = tail.split("\n");
 		for (int i = lines.length - 1; i >= 0; i--)
 		{
 			String line = lines[i].trim();
 			// The first line of the tail may be cut off at the front, and the last at the back
-			if (!line.startsWith("{") || !line.endsWith("}"))
+			if (line.startsWith("{") && line.endsWith("}"))
 			{
-				continue;
-			}
-			Matcher end = END_TICKS.matcher(line);
-			if (end.find())
-			{
-				return Integer.parseInt(end.group(1));
-			}
-			Matcher tick = TICK.matcher(line);
-			if (tick.find())
-			{
-				return Integer.parseInt(tick.group(1)) + 1;
+				return line;
 			}
 		}
-		return -1;
+		return null;
 	}
 
 	static Entry entry(String fileName, long modifiedMs, long bytes)
@@ -178,7 +214,7 @@ final class Recordings
 	{
 		Matcher m = FILE.matcher(fileName);
 		LocalDateTime when = null;
-		String name = fileName.endsWith(".jsonl") ? fileName.substring(0, fileName.length() - ".jsonl".length()) : fileName;
+		String name = EXTENSION.matcher(fileName).replaceFirst("");
 		if (m.matches())
 		{
 			// The recorder turns spaces in a session's name into hyphens; turn them back for showing
@@ -212,7 +248,7 @@ final class Recordings
 	/** Whether a file is a recording: its first line is a recording's header */
 	static boolean isRecording(Filepath f)
 	{
-		try (BufferedReader r = f.openBufferedReader())
+		try (BufferedReader r = Compressed.openReader(f))
 		{
 			return isHeader(r.readLine());
 		}
@@ -238,10 +274,9 @@ final class Recordings
 		{
 			// Keep its stamp and any number, but nothing a file name shouldn't hold
 			Matcher counted = COUNTED.matcher(m.group(2));
-			return m.group(1) + "-" + (counted.matches() ? Recording.safeLabel(counted.group(1)) + "_" + counted.group(2) : Recording.safeLabel(m.group(2))) + ".jsonl";
+			return m.group(1) + "-" + (counted.matches() ? Recording.safeLabel(counted.group(1)) + "_" + counted.group(2) : Recording.safeLabel(m.group(2))) + extension(fileName);
 		}
-		String base = fileName.toLowerCase().endsWith(".jsonl") ? fileName.substring(0, fileName.length() - 6) : fileName;
-		return STAMP.format(fileTime) + "-" + Recording.safeLabel(base) + ".jsonl";
+		return STAMP.format(fileTime) + "-" + Recording.safeLabel(EXTENSION.matcher(fileName).replaceFirst("")) + extension(fileName);
 	}
 
 	/** A recording's file name with a new name, keeping its time stamp */
@@ -249,7 +284,7 @@ final class Recordings
 	{
 		Matcher m = FILE.matcher(fileName);
 		String stamp = m.matches() ? m.group(1) : STAMP.format(LocalDateTime.now());
-		return stamp + "-" + Recording.safeLabel(newName) + ".jsonl";
+		return stamp + "-" + Recording.safeLabel(newName) + extension(fileName);
 	}
 
 	/**
@@ -271,25 +306,25 @@ final class Recordings
 		}
 		Matcher m = FILE.matcher(fileName);
 		String stamp = m.matches() ? m.group(1) : STAMP.format(LocalDateTime.now());
-		String label = m.matches() ? m.group(2) : Recording.safeLabel(fileName.replaceAll("(?i)\\.jsonl$", ""));
-		if (isFree(files, stamp, label, taken))
+		String label = m.matches() ? m.group(2) : Recording.safeLabel(EXTENSION.matcher(fileName).replaceFirst(""));
+		String extension = extension(fileName);
+		if (isFree(files, stamp + "-" + label + extension, label, taken))
 		{
-			return stamp + "-" + label + ".jsonl";
+			return stamp + "-" + label + extension;
 		}
 		Matcher counted = COUNTED.matcher(label);
 		String base = counted.matches() ? counted.group(1) : label;
 		for (int n = 1; ; n++)
 		{
-			if (isFree(files, stamp, base + "_" + n, taken))
+			if (isFree(files, stamp + "-" + base + "_" + n + extension, base + "_" + n, taken))
 			{
-				return stamp + "-" + base + "_" + n + ".jsonl";
+				return stamp + "-" + base + "_" + n + extension;
 			}
 		}
 	}
 
-	private static boolean isFree(List<String> files, String stamp, String label, List<String> taken)
+	private static boolean isFree(List<String> files, String file, String label, List<String> taken)
 	{
-		String file = stamp + "-" + label + ".jsonl";
 		return !taken.contains(shownName(label).toLowerCase()) && !files.contains(file.toLowerCase());
 	}
 }

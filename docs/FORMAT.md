@@ -15,19 +15,42 @@ https://github.com/runelite/runelite/wiki/Using-Jagex-Accounts.
 ## Reading a session without the replay
 
 ```
-python3 -I tools/summarize.py SESSION.jsonl
-python3 -I tools/summarize.py SESSION.jsonl --timeline --npc 16677 --from 40 --to 120
+python3 -I tools/summarize.py SESSION.jsonl.gz
+python3 -I tools/summarize.py SESSION.jsonl.gz --timeline --npc 16677 --from 40 --to 120
 ```
 
 The overview lists each NPC's animations, graphics, projectiles, sounds and lines, with the ticks they
 happened on and the gaps between repeats. A gap that keeps repeating is an attack cycle.
 `tools/replay.html` is the old top-down viewer, kept for quick checks: drop a session onto it.
 
-Files are named `yyyyMMdd-HHmmss-label.jsonl`. A label already in the folder gets a number, stored as
+Files are named `yyyyMMdd-HHmmss-label.jsonl.gz`. A label already in the folder gets a number, stored as
 `label_1`, `label_2` and shown as "label-1", "label-2". A recording started without a name is named
 after the place you're in ("Edgeville", "The Fractured Archive"), or else the highest-level NPC around,
 or else the nearest NPC, or else "session". Place names come from RuneLite's Discord plugin's list, by
 map square, with instances named after the map they were copied from.
+
+### Packing
+
+A recording is written as plain `.jsonl` while it runs, so a crash never leaves a broken file. When it
+stops, it's gzipped to `.jsonl.gz` (about 18 times smaller: a 26-minute 5-man raid goes from 30 MB to
+under 2 MB) and the plain file is deleted. The gzip header's comment field holds the recording's length
+as `{"ticks":N}`, so the panel and the replay list it without unpacking the file. Any gzip tool opens
+these (`gzip -dc`, 7-Zip, Python's `gzip`), and so does the replay; plain `.jsonl` recordings, from
+older versions or shared that way, still work everywhere.
+
+How a recording ends:
+
+| What happens | What's saved |
+|---|---|
+| *Stop recording*, its hotkey, the boss gone (auto-record) or the length limit | Stopped and packed straight away |
+| Logging out or hopping worlds | Stopped (`"logged out or hopped"`) and packed |
+| Turning the plugin off | Stopped (`"plugin turned off"`) and packed |
+| Closing RuneLite's window | Stopped (`"client closed"`). RuneLite waits up to 10 seconds for plugins as it closes, and packing takes about a second |
+| RuneLite crashes, is killed, or closes before packing finishes | The plain file stays, whole apart from a half-written last line. The next time the plugin starts it's given an end line (`"not stopped: the client closed or crashed"`) and packed |
+
+That last tidy-up only touches plain recordings nothing has written to for 2 minutes that have no end
+line, and skips any another RuneLite has open: while recording, a client locks a byte far past the end of
+its file, which never gets in the way of reading it.
 
 ## File format
 

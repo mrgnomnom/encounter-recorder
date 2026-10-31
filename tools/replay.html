@@ -133,7 +133,7 @@ footer { border-top: 1px solid var(--line); padding: 8px 16px; display: flex; fl
 <header>
   <h1>Encounter Replay</h1>
   <span class="meta" id="meta">No session loaded</span>
-  <label class="file">Open session…<input type="file" id="file" accept=".jsonl,.json,.txt"></label>
+  <label class="file">Open session…<input type="file" id="file" accept=".jsonl,.gz,.json,.txt"></label>
 </header>
 <main>
   <div id="mapWrap">
@@ -143,7 +143,7 @@ footer { border-top: 1px solid var(--line); padding: 8px 16px; display: flex; fl
       <label><input type="checkbox" id="smooth" checked> Smooth</label>
       <span class="muted">Scroll to zoom · dashed = server tile</span>
     </div>
-    <div id="drop">Drop an Encounter Recorder .jsonl session here<br>or use “Open session…”</div>
+    <div id="drop">Drop an Encounter Recorder .jsonl or .jsonl.gz session here<br>or use “Open session…”</div>
     <div id="tip"></div>
   </div>
   <aside>
@@ -829,10 +829,12 @@ function hover(e) {
 
 // ---------- files ----------
 
-function openFile(file) {
-  const reader = new FileReader();
-  reader.onload = () => load(String(reader.result), file.name);
-  reader.readAsText(file);
+async function openFile(file) {
+  // Recordings are gzipped (.jsonl.gz) once they stop: the browser unpacks them itself
+  const head = new Uint8Array(await file.slice(0, 2).arrayBuffer());
+  const packed = head[0] === 0x1f && head[1] === 0x8b;
+  const text = packed ? await new Response(file.stream().pipeThrough(new DecompressionStream("gzip"))).text() : await file.text();
+  load(text, file.name);
 }
 $("file").onchange = e => { if (e.target.files[0]) openFile(e.target.files[0]); };
 document.addEventListener("dragover", e => e.preventDefault());

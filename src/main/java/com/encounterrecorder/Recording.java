@@ -4,6 +4,10 @@ import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import java.io.BufferedWriter;
 import java.io.IOException;
+import java.nio.channels.Channels;
+import java.nio.channels.FileChannel;
+import java.nio.channels.OverlappingFileLockException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.StandardOpenOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -12,6 +16,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicLong;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
@@ -19,7 +24,8 @@ import net.runelite.client.util.Filepath;
 
 /**
  * One recording session: a JSON-lines file written on its own thread. Lines are queued on the client
- * thread and handed over once per tick, so the client thread never touches the disk.
+ * thread and handed over once per tick, so the client thread never touches the disk. When it stops, the
+ * same thread packs the file (see {@link Compressed}).
  */
 @Slf4j
 class Recording
@@ -53,6 +59,9 @@ class Recording
 	private final AtomicLong bytes = new AtomicLong();
 	@Getter
 	private volatile Filepath file;
+	/** Done once the file is closed and packed; null until it stops */
+	@Getter
+	private volatile Future<?> finished;
 
 	int ticksSinceWatchedNpc;
 
@@ -77,7 +86,17 @@ class Recording
 				// A name already in the folder gets the next number: TFA, TFA-1, TFA-2...
 				fileName = Recordings.numbered(Recordings.names(dir), fileName, null);
 				file = dir.joinSegment(fileName);
-				out = file.openBufferedWriter(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+				FileChannel channel = file.openFileChannel(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+				// Marks the file as being written, for another RuneLite tidying up the same folder
+				try
+				{
+					channel.tryLock(Compressed.LOCK_AT, 1, false);
+				}
+				catch (IOException | OverlappingFileLockException e)
+				{
+					log.debug("Could not lock recording {}", fileName, e);
+				}
+				out = new BufferedWriter(Channels.newWriter(channel, StandardCharsets.UTF_8.newEncoder(), -1));
 			}
 			catch (IOException | IllegalArgumentException e)
 			{
@@ -159,26 +178,45 @@ class Recording
 	}
 
 	/**
-	 * Writes what is queued, closes the file and lets the writer thread finish on its own
+	 * Writes what is queued, closes the file and packs it, then runs {@code whenDone}, all on the writer
+	 * thread, which then finishes on its own. A file that can't be packed stays as it is
 	 */
-	void close()
+	Future<?> close(Runnable whenDone)
 	{
 		flush();
-		writer.execute(() ->
+		int length = ticks;
+		finished = writer.submit(() ->
 		{
-			if (out == null)
-			{
-				return;
-			}
 			try
 			{
-				out.close();
+				if (out == null)
+				{
+					return;
+				}
+				try
+				{
+					out.close();
+				}
+				catch (IOException e)
+				{
+					log.warn("Could not close recording {}", fileName, e);
+					return;
+				}
+				try
+				{
+					fileName = Compressed.compress(file.getParent(), fileName, length, null);
+				}
+				catch (IOException | RuntimeException e)
+				{
+					log.warn("Could not pack recording {}; it's kept unpacked", fileName, e);
+				}
 			}
-			catch (IOException e)
+			finally
 			{
-				log.warn("Could not close recording {}", fileName, e);
+				whenDone.run();
 			}
 		});
 		writer.shutdown();
+		return finished;
 	}
 }

@@ -27,7 +27,7 @@ skilling trip: anything you can see, you can record.
 
 ## Local, private and free
 
-- **Recordings stay on your computer.** They're plain files in your RuneLite folder, and the plugin
+- **Recordings stay on your computer.** They're files in your RuneLite folder, and the plugin
   makes no network requests.
 - **The replay runs in your browser, on your own game files.** It draws the game from the copy of the
   game cache RuneLite already keeps on your PC, so no game data is downloaded or hosted.
@@ -77,6 +77,11 @@ Right-click a replay to rename or delete it. **Import…** brings in a recording
 you. Recordings are saved in `.runelite/plugin-data/encounter-recorder/sessions`, and **Copy folder
 path** puts that location on your clipboard, ready to paste into File Explorer. A recording you don't name
 is named after where you are, like "Edgeville", or the boss you're fighting.
+
+Recordings are packed (`.jsonl.gz`) as soon as they stop, so they're small enough to share anywhere: a
+26-minute 5-man Fractured Archive raid is under 2 MB. Forgot to press stop? Logging out stops and saves
+the recording, and so does closing RuneLite. If RuneLite crashes, what it recorded is saved the next time
+it starts.
 
 ## What it never records
 

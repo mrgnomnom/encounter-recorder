@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
 """Summarise an Encounter Recorder session.
 
-    python3 -I tools/summarize.py SESSION.jsonl                 # overview: what each NPC did, and how often
-    python3 -I tools/summarize.py SESSION.jsonl --timeline      # every event, tick by tick
-    python3 -I tools/summarize.py SESSION.jsonl --timeline --npc 16677 --from 40 --to 120
+    python3 -I tools/summarize.py SESSION.jsonl.gz              # overview: what each NPC did, and how often
+    python3 -I tools/summarize.py SESSION.jsonl.gz --timeline   # every event, tick by tick
+    python3 -I tools/summarize.py SESSION.jsonl.gz --timeline --npc 16677 --from 40 --to 120
 
 The overview lists, for each NPC ID, every animation, graphic, projectile and sound tied to it with
 the ticks it happened on and the gaps between repeats. Repeating gaps are attack cycles.
 """
 import argparse
+import gzip
 import json
 import sys
 from collections import defaultdict
 
 
 def load(path):
-    with open(path, encoding="utf-8") as f:
+    # Recordings are gzipped (.jsonl.gz) once they stop; older ones and imports may be plain
+    with open(path, "rb") as probe:
+        packed = probe.read(2) == b"\x1f\x8b"
+    with (gzip.open(path, "rt", encoding="utf-8") if packed else open(path, encoding="utf-8")) as f:
         for number, raw in enumerate(f, 1):
             raw = raw.strip()
             if raw:
