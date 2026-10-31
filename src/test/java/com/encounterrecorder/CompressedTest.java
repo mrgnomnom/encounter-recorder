@@ -96,6 +96,47 @@ public class CompressedTest
 		assertFalse(Compressed.isGzip(plain, plain.length));
 	}
 
+	/** Never ends, as a gzip bomb nearly doesn't */
+	private static java.io.InputStream endless(byte value)
+	{
+		return new java.io.InputStream()
+		{
+			@Override
+			public int read()
+			{
+				return value & 0xff;
+			}
+		};
+	}
+
+	@Test
+	public void aFirstLineStopsAtItsNewlineOrTheLimit() throws IOException
+	{
+		assertEquals("{\"t\":0,\"c\":1,\"e\":\"header\"}", Compressed.firstLine(new ByteArrayInputStream(LINES.getBytes(StandardCharsets.UTF_8))));
+		assertEquals("no newline", Compressed.firstLine(new ByteArrayInputStream("no newline".getBytes(StandardCharsets.UTF_8))));
+		assertEquals("", Compressed.firstLine(new ByteArrayInputStream(new byte[0])));
+		assertEquals(Compressed.FIRST_LINE_BYTES, Compressed.firstLine(endless((byte) 'x')).length());
+		assertFalse(Recordings.isHeader(Compressed.firstLine(endless((byte) 'x'))));
+	}
+
+	@Test
+	public void aRecordingCutOffStillGivesItsHeader() throws IOException
+	{
+		byte[] gz = pack(LINES, null, -1);
+		byte[] cut = java.util.Arrays.copyOf(gz, gz.length - 8);
+		try (GZIPInputStream in = new GZIPInputStream(new ByteArrayInputStream(cut)))
+		{
+			assertEquals("{\"t\":0,\"c\":1,\"e\":\"header\"}", Compressed.firstLine(in));
+		}
+	}
+
+	@Test
+	public void lengthsAreNotLookedForPastTheLimit()
+	{
+		assertEquals(-1, Compressed.ticksFromEnd(endless((byte) 0), 1 << 20));
+		assertEquals(2, Compressed.ticksFromEnd(new ByteArrayInputStream(LINES.getBytes(StandardCharsets.UTF_8)), 1 << 20));
+	}
+
 	@Test
 	public void finishedAndUnfinishedRecordingsAreToldApart()
 	{

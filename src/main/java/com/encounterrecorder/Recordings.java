@@ -1,6 +1,5 @@
 package com.encounterrecorder;
 
-import java.io.BufferedReader;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
@@ -248,9 +247,9 @@ final class Recordings
 	/** Whether a file is a recording: its first line is a recording's header */
 	static boolean isRecording(Filepath f)
 	{
-		try (BufferedReader r = Compressed.openReader(f))
+		try
 		{
-			return isHeader(r.readLine());
+			return isHeader(Compressed.firstLine(f));
 		}
 		catch (IOException | RuntimeException e)
 		{
