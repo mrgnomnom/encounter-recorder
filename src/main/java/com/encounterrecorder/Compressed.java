@@ -1,10 +1,8 @@
 package com.encounterrecorder;
 
 import java.io.BufferedOutputStream;
-import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
@@ -42,6 +40,13 @@ final class Compressed
 	static final long LOCK_AT = Long.MAX_VALUE - 1;
 	/** A plain recording left alone this long is no longer being written */
 	static final long IDLE_MS = 2 * 60 * 1000;
+	/**
+	 * How much of a file is read to find its first line. A header is a few hundred bytes, and a gzip from
+	 * someone else can unpack to a thousand times its size, so a line must not be read to wherever it ends
+	 */
+	static final int FIRST_LINE_BYTES = 1 << 16;
+	/** How far a gzip is unpacked to find its length: past any real recording, as in the replay page */
+	static final long MAX_UNPACKED = 500L * 1024 * 1024;
 	private static final Pattern COMMENT_TICKS = Pattern.compile("\"ticks\":(\\d+)");
 	private static final int FLAG_EXTRA = 4;
 	private static final int FLAG_NAME = 8;
@@ -234,9 +239,22 @@ final class Compressed
 			return ticks;
 		}
 		// Gzipped by something else: keep the last few KB as it unpacks
+		try (InputStream in = new GZIPInputStream(f.openInputStream(), 1 << 16))
+		{
+			return ticksFromEnd(in, MAX_UNPACKED);
+		}
+		catch (IOException e)
+		{
+			return -1;
+		}
+	}
+
+	/** The length from the end of an unpacking recording; -1 if it gives none or runs past {@code limit} */
+	static int ticksFromEnd(InputStream in, long limit)
+	{
 		byte[] ring = new byte[Recordings.TAIL_BYTES];
 		long total = 0;
-		try (InputStream in = new GZIPInputStream(f.openInputStream(), 1 << 16))
+		try
 		{
 			byte[] chunk = new byte[1 << 16];
 			for (int read; (read = in.read(chunk)) > 0; )
@@ -246,6 +264,10 @@ final class Compressed
 					ring[(int) ((total + i) % ring.length)] = chunk[i];
 				}
 				total += read;
+				if (total > limit)
+				{
+					return -1;
+				}
 			}
 		}
 		catch (IOException e)
@@ -271,8 +293,8 @@ final class Compressed
 		return length;
 	}
 
-	/** A recording's lines, unpacked if it's gzipped */
-	static BufferedReader openReader(Filepath f) throws IOException
+	/** A recording's first line, unpacked if it's gzipped */
+	static String firstLine(Filepath f) throws IOException
 	{
 		byte[] head = new byte[2];
 		int length;
@@ -280,16 +302,33 @@ final class Compressed
 		{
 			length = readUpTo(in, head);
 		}
-		InputStream in = f.openInputStream();
-		try
+		try (InputStream in = f.openInputStream();
+			InputStream unpacked = isGzip(head, length) ? new GZIPInputStream(in) : in)
 		{
-			return new BufferedReader(new InputStreamReader(isGzip(head, length) ? new GZIPInputStream(in) : in, StandardCharsets.UTF_8));
+			return firstLine(unpacked);
 		}
-		catch (IOException e)
+	}
+
+	/**
+	 * The start of a stream, up to its first newline or {@link #FIRST_LINE_BYTES}. Stops at the newline, so
+	 * a recording cut off further on still gives its header
+	 */
+	static String firstLine(InputStream in) throws IOException
+	{
+		byte[] start = new byte[FIRST_LINE_BYTES];
+		int length = 0;
+		for (int read; length < start.length && (read = in.read(start, length, start.length - length)) > 0; )
 		{
-			in.close();
-			throw e;
+			for (int i = length; i < length + read; i++)
+			{
+				if (start[i] == '\n')
+				{
+					return new String(start, 0, i, StandardCharsets.UTF_8);
+				}
+			}
+			length += read;
 		}
+		return new String(start, 0, length, StandardCharsets.UTF_8);
 	}
 
 	/** Whether another RuneLite holds this file's lock, so it's still recording into it */
